@@ -28,12 +28,32 @@ jobs:
     defaults:
       run:
         working-directory: cienergytool
+    env:
+      # Silence the Material-for-MkDocs MOTD that warns about the upcoming
+      # MkDocs 2.0 (informational only, but it pollutes the log and is often
+      # mistaken for an error). See:
+      # https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/
+      MKDOCS_MATERIAL_DISABLE_NEWS: "1"
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - run: pip install mkdocs-material
-      - run: mkdocs build --strict
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Pin to the last known-good MkDocs 1.x line. mkdocs-material is locked
+      # to the 9.5.x line because 9.6+ requires MkDocs >= 1.6 and Python 3.11
+      # quirks, and 10.x will track MkDocs 2.0 (breaking — see MOTD above).
+      - name: Install MkDocs (pinned)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "mkdocs>=1.5,<2" "mkdocs-material>=9.5,<9.6"
+          mkdocs --version
+      # Build with --strict so any plugin / link / nav warning fails CI.
+      # If the build fails on a Material MOTD line, it's not the cause:
+      # scroll up to the actual ERROR line printed by MkDocs.
+      - name: Build site
+        run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3
         with:
           path: cienergytool/site

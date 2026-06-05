@@ -1,30 +1,52 @@
 # CI workflow that dogfoods cienergy on itself: every PR / push runs
 # `go test`, then measures and uploads its own SCI energy-report.json
 # (Mode B embedded dashboard) as a build artifact.
+#
+# The Go project lives under cienergytool/ — every shell step runs with
+# working-directory: cienergytool, and any action `path:` / local `uses:`
+# is prefixed explicitly (those fields don't honour defaults.run).
 
 name: ci
 
 on:
   pull_request:
+    paths:
+      - 'cienergytool/**'
+      - '.github/workflows/ci.yml'
   push:
     branches: [ main ]
+    paths:
+      - 'cienergytool/**'
+      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    working-directory: cienergytool
+
 jobs:
   test:
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: cienergytool
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with:
+          go-version: '1.22'
+          cache-dependency-path: cienergytool/go.sum
 
-      # Dogfood: wrap the rest of the job with cienergy. The action is the
-      # one defined in this same repo, so we reference it by local path.
-      - uses: ./action
+      # Dogfood: wrap the rest of the job with cienergy. The action lives in
+      # cienergytool/action — `uses:` paths are resolved from the REPO ROOT
+      # (not from defaults.run.working-directory), so the cienergytool/ prefix
+      # is mandatory here. Otherwise the runner looks for ./action at the
+      # repo root and fails with: "Can't find 'action.yml' under …/action".
+      - uses: ./cienergytool/action
         with:
           region: US-VA
           team:   cienergy-maintainers
@@ -46,6 +68,8 @@ jobs:
       - name: Lint OpenAPI
         uses: stoplightio/spectral-action@v0.8.13
         with:
-          file_glob: 'docs/api/openapi.yaml'
+          file_glob: 'cienergytool/docs/api/openapi.yaml'
         continue-on-error: true
+
+
 
