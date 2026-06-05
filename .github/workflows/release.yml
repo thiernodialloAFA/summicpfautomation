@@ -188,7 +188,12 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p dist
-          find dist-merged -type f -exec cp -t dist {} +
+          # Each per-platform artifact ships its own `checksums.txt`; copying
+          # all of them would clash ("will not overwrite just-created …").
+          # We copy only the binaries (cienergy-*) and rebuild ONE unified
+          # checksums.txt across all platforms below.
+          find dist-merged -type f -name 'cienergy-*' ! -name 'checksums.txt' \
+            -exec cp -t dist {} +
           (cd dist && sha256sum cienergy-* > checksums.txt)
           ls -la dist
 
