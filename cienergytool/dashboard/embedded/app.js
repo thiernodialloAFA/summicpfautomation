@@ -201,6 +201,35 @@ function archKey(r) {
   return a || "unknown";
 }
 
+// Produce a short (≤ 8 chars) label for the X-axis of per-run charts.
+// Uses the repository basename (segment after the last "/") so a repo like
+// `myorg/green-api-workshop-final` shows up as `green-a…` instead of the
+// full slug, and 30+ char labels never blow up the chart width.
+// Long names are truncated to 7 chars + "…".
+//
+//   axa/claims                        →  claims
+//   axa/green-api-workshop-final      →  green-a…
+//   thiernodialloAFA/creedengo-java   →  creeden…
+function shortRunLabel(r) {
+  const repo = (r?.run?.repository || r?.run?.id || "").trim();
+  const base = repo.split("/").pop() || repo || "?";
+  if (base.length <= 8) return base;
+  return base.slice(0, 7) + "…";
+}
+
+// Disambiguate identical short labels across the dataset: when two repos
+// share the same basename (rare but possible), append a numeric suffix so
+// the chart still gives each bar a unique X tick.
+function buildShortRunLabels(reports) {
+  const seen = new Map();   // base → count
+  return reports.map(r => {
+    const base = shortRunLabel(r);
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base.slice(0, 6)}…${n}`;
+  });
+}
+
 function dominantSource(r) {
   const counts = {};
   let bestKwh = -1, bestSrc = "—";
@@ -381,7 +410,9 @@ function renderCharts() {
   state.charts.carbon = new Chart($("#chartCarbon"), {
     type: "bar",
     data: {
-      labels: ordered.map(r => r.run.id),
+      // Short ≤8-char labels (repo basename, truncated) — full repo name
+      // surfaces in the tooltip title below.
+      labels: buildShortRunLabels(ordered),
       datasets: [
         {
           label: opLabel,
@@ -400,7 +431,8 @@ function renderCharts() {
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { stacked: true },
+        x: { stacked: true,
+             ticks: { autoSkip: false, maxRotation: 0, minRotation: 0, font: { size: 11 } } },
         y: { stacked: true,
              title: { display: true, text: scaled ? "carbon / year" : "carbon" },
              beginAtZero: true,
@@ -410,6 +442,16 @@ function renderCharts() {
         legend: { position: "bottom" },
         tooltip: {
           callbacks: {
+            // Title = full repository slug + run.id so hovering recovers
+            // the information lost to the ≤8-char X-axis labels.
+            title:  (items) => {
+              const i = items[0]?.dataIndex;
+              const r = ordered[i];
+              if (!r) return "";
+              const repo = r.run?.repository || "";
+              const id   = r.run?.id ? ` · ${r.run.id}` : "";
+              return repo + id;
+            },
             label:  (ctx)   => `${ctx.dataset.label}: ${fmtC(ctx.parsed.y)}`,
             footer: (items) => {
               const total = items.reduce((s, it) => s + (it.parsed?.y || 0), 0);
@@ -570,7 +612,7 @@ function renderBreakdownChart() {
   state.charts.breakdown = new Chart(canvas, {
     type: "bar",
     data: {
-      labels: ordered.map(r => r.run.id),
+      labels: buildShortRunLabels(ordered),
       datasets: stepNames.map((name, i) => ({
         label: name,
         backgroundColor: C.palette[i % C.palette.length],
@@ -580,14 +622,24 @@ function renderBreakdownChart() {
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { stacked: true },
+        x: { stacked: true,
+             ticks: { autoSkip: false, maxRotation: 0, minRotation: 0, font: { size: 11 } } },
         y: { stacked: true,
              title: { display: true, text: scaled ? "energy / year" : "energy" },
              ticks: { callback: (v) => fmtE(v) } },
       },
       plugins: {
         legend: { position: "bottom" },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtE(ctx.parsed.y)}` } },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const i = items[0]?.dataIndex;
+              const r = ordered[i];
+              return r ? (r.run?.repository || "") + (r.run?.id ? ` · ${r.run.id}` : "") : "";
+            },
+            label: (ctx) => `${ctx.dataset.label}: ${fmtE(ctx.parsed.y)}`,
+          },
+        },
       },
     },
   });
