@@ -58,7 +58,7 @@ The aggregator picks up GitLab metadata from the standard predefined variables (
 ## Self-hosted runners
 
 If your runners have privileged access to `/sys/class/powercap/intel-rapl:*`
-(common for shell or `privileged: true` Docker executors), the aggregator
+(common for shell or `privileged: true` podman executors), the aggregator
 will switch to **RAPL hardware measurement** instead of the eco-ci model —
 no config change needed; the source is recorded in
 `energy.byStep[].source` for audit.

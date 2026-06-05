@@ -1,0 +1,49 @@
+# OpenTelemetry Collector configuration for the cienergy local stack.
+# Receives OTLP/HTTP (4318) and OTLP/gRPC (4317) from cienergy-aggregator,
+# exposes the metrics as a Prometheus scrape endpoint on :8889, and prints
+# them to the container log for debugging.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 100
+  # Re-label cienergy resource attributes onto every metric so Prometheus
+  # picks them up as labels (otherwise they'd stay at resource scope only).
+  resource:
+    attributes:
+      - key: service.name
+        value: cienergy
+        action: upsert
+
+exporters:
+  # Print every received metric — easy to debug with `podman logs otel-collector`.
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 50
+
+  # Prometheus exporter: scraped by the prometheus container on :8889/metrics.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true   # copies resource attributes (repo, zone, …) into labels
+    enable_open_metrics: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [debug, prometheus]
+

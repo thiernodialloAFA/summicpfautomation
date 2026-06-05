@@ -10,16 +10,17 @@ const (
 )
 
 type Report struct {
-	Schema         string    `json:"$schema"`
-	SpecVersion    string    `json:"specVersion"`
-	SCISpecVersion string    `json:"sciSpecVersion"`
-	Run            Run       `json:"run"`
-	Runner         Runner    `json:"runner"`
-	Energy         Energy    `json:"energy"`
-	Carbon         Carbon    `json:"carbon"`
-	SCI            SCI       `json:"sci"`
-	Cache          *Cache    `json:"cache,omitempty"`
-	Metadata       *Metadata `json:"metadata,omitempty"`
+	Schema         string       `json:"$schema"`
+	SpecVersion    string       `json:"specVersion"`
+	SCISpecVersion string       `json:"sciSpecVersion"`
+	Run            Run          `json:"run"`
+	Runner         Runner       `json:"runner"`
+	Energy         Energy       `json:"energy"`
+	Carbon         Carbon       `json:"carbon"`
+	SCI            SCI          `json:"sci"`
+	Cache          *Cache       `json:"cache,omitempty"`
+	Metadata       *Metadata    `json:"metadata,omitempty"`
+	Suggestions    []Suggestion `json:"suggestions,omitempty"`
 }
 
 type Run struct {
@@ -92,5 +93,19 @@ type Metadata struct {
 	Team       string            `json:"team,omitempty"`
 	CostCenter string            `json:"costCenter,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+// Suggestion is an actionable improvement attached to a Report. Severity is
+// "info" | "minor" | "major" | "critical". Estimated savings are *best-effort
+// upper bounds* derived from the report's own numbers — never claim a fix
+// users haven't applied yet.
+type Suggestion struct {
+	ID                    string  `json:"id"`
+	Severity              string  `json:"severity"`
+	Title                 string  `json:"title"`
+	Detail                string  `json:"detail"`
+	EstimatedSavingKWh    float64 `json:"estimatedSavingKWh,omitempty"`
+	EstimatedSavingGCO2eq float64 `json:"estimatedSavingGCO2eq,omitempty"`
+	Reference             string  `json:"reference,omitempty"`
 }
 

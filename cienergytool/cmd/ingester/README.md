@@ -19,20 +19,20 @@ Full spec: [`docs/api/openapi.yaml`](../../docs/api/openapi.yaml).
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PORT`           | `8080` | listen port |
+| `PORT`           | `8085` | listen port |
 | `POSTGRES_URL`   | `postgres://cienergy:cienergy@localhost:5432/cienergy?sslmode=disable` | DSN |
 | `INGESTER_TOKEN` | *(empty)* | if set, `/v1/*` requires `Authorization: Bearer <token>` |
 | `MAX_BODY_BYTES` | `1048576` (1 MiB) | request body limit |
 
 ## Run
 
-### With the bundled Docker Compose stack
+### With the bundled podman Compose stack
 
 ```sh
 cd dashboard/grafana
-docker compose up -d --build
+podman compose up -d --build
 # postgres   :5432
-# ingester   :8080
+# ingester   :8085
 # grafana    :3000   (anonymous Viewer)
 ```
 
@@ -44,11 +44,11 @@ POSTGRES_URL='postgres://cienergy:cienergy@localhost:5432/cienergy?sslmode=disab
   ./bin/cienergy-ingester
 ```
 
-### Docker image only
+### podman image only
 
 ```sh
-docker build -t cienergy/ingester:dev -f cmd/ingester/Dockerfile .
-docker run --rm -p 8080:8080 \
+podman build -t cienergy/ingester:dev -f cmd/ingester/Dockerfile .
+podman run --rm -p 8085:8085 \
   -e POSTGRES_URL='postgres://cienergy:cienergy@host.docker.internal:5432/cienergy?sslmode=disable' \
   cienergy/ingester:dev
 ```
@@ -83,7 +83,7 @@ build on telemetry error (CI sustainability ≠ blocker).
 
 ```sh
 make stack-up        # starts postgres + ingester + grafana
-make seed-samples    # POSTs the 5 bundled samples to localhost:8080
+make seed-samples    # POSTs the 5 bundled samples to localhost:8085
 open http://localhost:3000   # Grafana → cienergy/overview
 ```
 
@@ -101,15 +101,15 @@ retry safely on partial failures.
 ## Curl quick test
 
 ```sh
-curl -fsS -X POST http://localhost:8080/v1/runs \
+curl -fsS -X POST http://localhost:8085/v1/runs \
   -H 'Content-Type: application/json' \
   --data @dashboard/embedded/sample-reports/run-001-baseline.json
 # → 201
 # {"energyKWh":0.020966,"id":"gha-7001","sciValue":9.118,"totalCO2":9.118}
 
-curl -fsS 'http://localhost:8080/v1/runs?limit=10' | jq '.items[] | {id, repository, sci}'
+curl -fsS 'http://localhost:8085/v1/runs?limit=10' | jq '.items[] | {id, repository, sci}'
 
-curl -fsS http://localhost:8080/v1/runs/gha-7001 | jq '.sci'
+curl -fsS http://localhost:8085/v1/runs/gha-7001 | jq '.sci'
 ```
 
 ## Observability

@@ -23,14 +23,14 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      PORT: '8080'
+      PORT: '8085'
       POSTGRES_URL: 'postgres://cienergy:cienergy@postgres:5432/cienergy?sslmode=disable'
       INGESTER_TOKEN: '${INGESTER_TOKEN:-}'    # empty = anonymous ingestion
       MAX_BODY_BYTES: '1048576'
     ports:
-      - "8080:8080"
+      - "8085:8085"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/readyz"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -40,6 +40,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      prometheus:
+        condition: service_started
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
@@ -48,11 +50,49 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+
+  # ── OpenTelemetry Collector ────────────────────────────────────────────
+  # Receives metrics from cienergy-aggregator via OTLP/HTTP (4318) or
+  # OTLP/gRPC (4317), exposes them as a Prometheus scrape endpoint (8889).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP/HTTP  ← cienergy-aggregator --otlp-endpoint http://localhost:4318
+      - "4317:4317"   # OTLP/gRPC
+      - "8889:8889"   # Prometheus exporter (scraped by prometheus container)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8889/metrics"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  # ── Prometheus ─────────────────────────────────────────────────────────
+  # Scrapes the OpenTelemetry Collector and serves the data to Grafana
+  # via the cienergy-otlp datasource (provisioning/datasources/prometheus.yml).
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    depends_on:
+      otel-collector:
+        condition: service_started
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
 
 volumes:
   pgdata:
+  promdata:
 
 
 

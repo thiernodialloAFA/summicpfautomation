@@ -256,24 +256,37 @@ main {
 .chart-card h2 small { color: var(--text-muted); font-weight: 400; font-size: .82rem; }
 .chart-card canvas { flex: 1; min-height: 250px; max-height: 360px; }
 
+/* Full-width breakdown chart inside the accordion. Scroll horizontally when
+   many (runs × steps) bars overflow the page width. */
+.breakdown-canvas-wrap {
+  width: 100%;
+  height: 520px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.breakdown-canvas-wrap canvas {
+  /* width is set dynamically in renderBreakdownChart() based on the number
+     of runs so the chart never collapses to unreadable thin bars; the wrap
+     scrolls horizontally when the canvas exceeds the viewport. */
+  display: block;
+  height: 100% !important;
+}
+
 /* ─── Table ────────────────────────────────────────────────── */
+/* table-card is now a <details class="accordion-card"> too: keep its specific
+   padding tweaks (the table fills the body edge-to-edge, no extra padding). */
 .table-card { margin-top: 24px; padding: 0; }
-.table-head {
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 12px; flex-wrap: wrap;
-  padding: 18px 20px; border-bottom: 1px solid var(--border-soft);
-}
-.table-head h2 {
-  font-size: 1rem; margin: 0; text-transform: none; letter-spacing: 0;
-  color: var(--text); font-weight: 600;
-}
-.table-head input {
-  padding: 8px 12px; border-radius: 10px;
+.table-card .accordion-body { padding: 0; }
+/* Search field inside the accordion summary. */
+.table-card .accordion-summary input[type="search"] {
+  padding: 6px 10px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
   min-width: 240px; font: inherit; transition: border-color .15s, box-shadow .15s;
 }
-.table-head input::placeholder { color: var(--text-muted); }
-.table-head input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.table-card .accordion-summary input[type="search"]:focus-visible {
+  outline: none; border-color: var(--primary); box-shadow: var(--ring);
+}
+.table-card .accordion-summary input[type="search"]::placeholder { color: var(--text-muted); }
 .table-wrap { overflow: auto; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .9rem; }
 th, td {
@@ -306,6 +319,141 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .badge.ok    { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary); }
 .badge.warn  { background: color-mix(in srgb, var(--warn) 18%, transparent);    color: var(--warn);    }
 .badge.bad   { background: color-mix(in srgb, var(--danger) 16%, transparent);  color: var(--danger);  }
+
+/* ─── Suggestions card ─────────────────────────────────────── */
+.suggestions-card { margin-top: 24px; padding: 18px 20px; }
+.suggestions-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.suggestions-head h2 { margin: 0; font-size: 1.05rem; }
+.suggestions-head h2 small { font-weight: 400; margin-left: 8px; }
+.suggestions-filter { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+.suggestions-filter select {
+  padding: 4px 8px; border-radius: 6px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/* ─── Generic accordion card (full width, closed by default) ─ */
+.accordion-card {
+  margin-top: 24px;
+  padding: 0;
+  width: 100%;
+  /* override .card hover lift so the chevron animation reads cleanly */
+}
+.accordion-card:hover { transform: none; }
+.accordion-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 16px 22px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-radius: var(--radius);
+  transition: background .15s;
+}
+.accordion-summary::-webkit-details-marker { display: none; }
+.accordion-summary:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.accordion-summary:focus-visible { outline: none; box-shadow: var(--ring); }
+.accordion-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 1.05rem; font-weight: 600; color: var(--text);
+}
+.accordion-title small { font-weight: 400; }
+.accordion-meta {
+  display: inline-flex; align-items: center; gap: 14px;
+  color: var(--text-muted); font-size: .85rem;
+}
+.accordion-chev {
+  display: inline-block;
+  transition: transform .2s ease;
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+.accordion-card[open] .accordion-chev { transform: rotate(180deg); color: var(--primary); }
+.accordion-card[open] .accordion-summary {
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.accordion-body { padding: 18px 22px 22px; }
+
+/* ─── In-grid chart accordion (chart-card + collapsible) ───── */
+/* Used by the per-arch energy/carbon doughnuts: same grid slot &
+   visual weight as a regular .chart-card, but collapsed by default
+   so the above-the-fold view stays focused on KPIs + headline charts. */
+.chart-accordion { padding: 0; min-height: 0; }
+.chart-accordion:not([open]) { min-height: 0; }
+.chart-accordion[open]       { min-height: 340px; }
+.chart-accordion:hover       { transform: none; }
+.chart-accordion-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px;
+  cursor: pointer; list-style: none; user-select: none;
+  border-radius: var(--radius);
+  transition: background .15s;
+}
+.chart-accordion-summary::-webkit-details-marker { display: none; }
+.chart-accordion-summary:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.chart-accordion-summary:focus-visible { outline: none; box-shadow: var(--ring); }
+.chart-accordion-title {
+  font-size: 1rem; font-weight: 600; color: var(--text);
+  display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.chart-accordion-title small { font-weight: 400; color: var(--text-muted); font-size: .82rem; }
+.chart-accordion-meta {
+  display: inline-flex; align-items: center; gap: 10px;
+  color: var(--text-muted); font-size: .82rem;
+}
+.chart-accordion[open] .accordion-chev { transform: rotate(180deg); color: var(--primary); }
+.chart-accordion[open] .chart-accordion-summary {
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.chart-accordion-body { padding: 14px 20px 18px; display: flex; flex-direction: column; }
+.chart-accordion-body canvas { flex: 1; min-height: 250px; max-height: 360px; }
+
+/* Suggestions live inside an accordion-body; restore their layout/spacing. */
+.suggestions-card .accordion-body { padding: 16px 22px 22px; }
+.suggestions-body { display: flex; flex-direction: column; gap: 16px; }
+.sugg-repo { border-top: 1px dashed var(--border); padding-top: 12px; }
+.sugg-repo:first-child { border-top: none; padding-top: 0; }
+.sugg-repo-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.sugg-repo-title { font-weight: 600; font-size: .95rem; }
+.sugg-repo-meta  { color: var(--text-muted); font-size: .8rem; }
+.sugg-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.sugg-item {
+  display: grid; grid-template-columns: 100px 1fr auto; align-items: start;
+  gap: 14px; padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-2); border-left: 3px solid var(--border);
+}
+.sugg-item.sev-info     { border-left-color: var(--text-muted); }
+.sugg-item.sev-minor    { border-left-color: var(--accent, #1f6feb); }
+.sugg-item.sev-major    { border-left-color: var(--warn, #d97706); }
+.sugg-item.sev-critical { border-left-color: var(--danger, #dc2626); }
+.sugg-sev {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  text-align: center; align-self: start;
+}
+.sev-info .sugg-sev     { background: color-mix(in srgb, var(--text-muted) 18%, transparent); color: var(--text-soft); }
+.sev-minor .sugg-sev    { background: color-mix(in srgb, var(--accent, #1f6feb) 20%, transparent); color: var(--accent, #1f6feb); }
+.sev-major .sugg-sev    { background: color-mix(in srgb, var(--warn, #d97706) 22%, transparent); color: var(--warn, #d97706); }
+.sev-critical .sugg-sev { background: color-mix(in srgb, var(--danger, #dc2626) 22%, transparent); color: var(--danger, #dc2626); }
+.sugg-body strong { display: block; margin-bottom: 2px; }
+.sugg-body p { margin: 2px 0 0; color: var(--text-soft); font-size: .85rem; line-height: 1.45; }
+.sugg-body a { color: var(--accent, #1f6feb); }
+.sugg-saving {
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  font-size: .82rem; color: var(--primary); text-align: right; white-space: nowrap;
+  align-self: center;
+}
+.sugg-saving small { display: block; color: var(--text-muted); font-weight: 400; }
+.sugg-empty { color: var(--text-muted); font-style: italic; padding: 12px 0; }
 
 /* ─── Errors ───────────────────────────────────────────────── */
 .errors {
@@ -354,4 +502,138 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
   .kpi { font-size: 1.4rem; }
   main { padding: 18px 14px 32px; }
 }
+
+/* ─── Scenario simulator ───────────────────────────────────── */
+.simulator {
+  margin-top: 24px;
+  padding: 0;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 6%, var(--surface)) 0%, var(--surface) 70%),
+    var(--surface);
+  border: 1px solid var(--border);
+}
+.simulator:hover { transform: none; }  /* override .card hover */
+
+/* <summary> styling */
+.sim-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 16px 22px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-radius: var(--radius);
+  transition: background .15s;
+}
+.sim-summary::-webkit-details-marker { display: none; }
+.sim-summary:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.sim-summary:focus-visible { outline: none; box-shadow: var(--ring); }
+.sim-summary-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 1.05rem; font-weight: 600; color: var(--text);
+}
+.sim-summary-meta {
+  display: inline-flex; align-items: center; gap: 12px;
+  color: var(--text-muted);
+}
+.sim-summary-chev {
+  display: inline-block;
+  transition: transform .2s ease;
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+.simulator[open] .sim-summary-chev { transform: rotate(180deg); color: var(--primary); }
+.simulator[open] .sim-summary { border-bottom: 1px solid var(--border-soft); border-radius: var(--radius) var(--radius) 0 0; }
+
+.sim-body { padding: 18px 22px 20px; }
+
+.sim-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.sim-head .muted { margin: 0; }
+
+.sim-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: end;
+}
+.sim-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sim-field > span {
+  font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.sim-field select,
+.sim-field input {
+  font: inherit;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px;
+  transition: border-color .15s, box-shadow .15s;
+  width: 100%;
+}
+.sim-field select:focus,
+.sim-field input:focus {
+  outline: none; border-color: var(--primary); box-shadow: var(--ring);
+}
+.sim-field small { font-size: .72rem; }
+
+.sim-multiplier {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--primary) 40%, transparent);
+  border-radius: 10px; padding: 10px 12px;
+  align-items: center; justify-content: center;
+  text-align: center;
+}
+.sim-multiplier strong {
+  display: block; font-size: 1.4rem; color: var(--primary);
+  margin-top: 4px; font-variant-numeric: tabular-nums;
+}
+
+.sim-results {
+  display: grid; gap: 14px; margin-top: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.sim-result {
+  padding: 14px 16px;
+  border-left: 3px solid var(--primary);
+  background: var(--surface);
+}
+.sim-result h3 {
+  margin: 0 0 8px; font-size: .72rem; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted);
+}
+.sim-result .kpi { font-size: 1.5rem; }
+.sim-delta {
+  margin: 6px 0 0; font-size: .82rem; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sim-delta.up    { color: var(--danger); }
+.sim-delta.down  { color: var(--primary); }
+.sim-delta.flat  { color: var(--text-muted); }
+
+@media (max-width: 640px) {
+  .sim-grid, .sim-results { grid-template-columns: repeat(2, 1fr); }
+  .sim-multiplier { grid-column: span 2; }
+  .sim-summary { padding: 14px 16px; }
+  .sim-body { padding: 14px 16px 18px; }
+}
+
+/* ─── CSRD download banner (set by run.sh + loadFromQuery) ─────────────── */
+.csrd-banner {
+  margin-top: 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  padding: 16px 22px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--surface)) 0%, var(--surface) 70%),
+    var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+}
+.csrd-banner h2 {
+  margin: 0; font-size: 1.05rem; font-weight: 600;
+  text-transform: none; letter-spacing: 0; color: var(--text);
+}
+.csrd-banner .muted { margin: 4px 0 0; }
 

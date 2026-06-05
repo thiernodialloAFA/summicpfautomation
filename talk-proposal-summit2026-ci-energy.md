@@ -92,7 +92,7 @@ AXA operates hundreds of APIs, dozens of ML models, and a growing fleet of GenAI
 - Green Software Foundation — **SCI specification, ISO/IEC 21031:2024**: https://sci.greensoftware.foundation/
 - GitHub Docs — *Caching dependencies to speed up workflows*: https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows
 - GitHub Blog (June 2024) — *Arm64 on GitHub Actions*: https://github.blog/2024-06-03-arm64-on-github-actions-powering-faster-more-efficient-build-systems/
-- Docker — BuildKit cache reference: https://docs.docker.com/build/cache/
+- podman — BuildKit cache reference: https://docs.docker.com/build/cache/
 - OCI Image Specification (digest pinning): https://github.com/opencontainers/image-spec
 - Sysdig — *2024 Cloud-Native Security & Usage Report* (mutable-tag prevalence): https://sysdig.com/2024-cloud-native-security-and-usage-report/
 - **CVE-2025-30066** — *tj-actions/changed-files* supply-chain compromise (March 2025): https://www.cve.org/CVERecord?id=CVE-2025-30066

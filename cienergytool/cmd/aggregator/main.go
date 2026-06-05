@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/axa-oss/cienergytool/internal/cidetect"
 	"github.com/axa-oss/cienergytool/internal/embodied"
 	"github.com/axa-oss/cienergytool/internal/exporter/otlp"
 	"github.com/axa-oss/cienergytool/internal/grid"
@@ -20,6 +21,7 @@ import (
 	"github.com/axa-oss/cienergytool/internal/probe/ecoci"
 	"github.com/axa-oss/cienergytool/internal/probe/rapl"
 	"github.com/axa-oss/cienergytool/internal/sci"
+	"github.com/axa-oss/cienergytool/internal/suggest"
 )
 
 // stepSample is one line of the --steps-file JSONL input.
@@ -41,7 +43,7 @@ func main() {
 		start     = flag.String("start", "", "run start time (RFC3339); default: now")
 		end       = flag.String("end", "", "run end time (RFC3339); default: now")
 		platform  = flag.String("platform", defPlatform, "ci platform")
-		repo      = flag.String("repo", defRepo, "repository slug")
+		repo      = flag.String("repo", defRepo, "repository slug; comma-separated for multi-repo runs (one report per repo will be written)")
 		workflow  = flag.String("workflow", defWorkflow, "workflow / pipeline name")
 		ref       = flag.String("ref", defRef, "git ref")
 		commit    = flag.String("commit", defCommit, "commit sha")
@@ -67,6 +69,8 @@ func main() {
 		otlpURL   = flag.String("otlp-endpoint", envOr("CIENERGY_OTLP_ENDPOINT", ""), "optional OTLP/HTTP-JSON base URL (POST to /v1/metrics)")
 		otlpAuth  = flag.String("otlp-header", envOr("CIENERGY_OTLP_HEADER", ""), "optional 'Header: Value' pair to add to the OTLP request (e.g. for auth)")
 	)
+	var repoPaths multiFlag
+	flag.Var(&repoPaths, "repo-path", "map a repo slug to a local checkout: 'org/app=./path'. Repeatable. When set, the aggregator scans the path with cidetect and emits one *distinct* report per detected CI pipeline, replacing the shared --steps-file numbers.")
 	flag.Parse()
 
 	startT := parseTimeOr(*start, time.Now().UTC())
@@ -87,146 +91,252 @@ func main() {
 		*workflow = "local"
 	}
 
+	// Multi-repo support: --repo accepts a comma-separated list. One report per
+	// repository is emitted (same energy/runner numbers, distinct run.repository).
+	repos := splitRepos(*repo)
+
 	steps, err := loadSteps(*stepsFile)
-	check(err)
+	if err != nil && len(repoPaths) == 0 {
+		// Only fatal when no per-repo path was provided to substitute.
+		check(err)
+	}
 
-	// Energy aggregation.
-	var totalKWh float64
-	reportSteps := make([]model.Step, 0, len(steps))
-	for _, s := range steps {
-		kwh := s.KWh
-		src := s.Source
-		if kwh == 0 {
-			kwh = ecoci.EstimateKWh(*tdp, s.CPUUtilPct, s.DurationSeconds)
-			if src == "" {
-				src = "eco-ci-model"
+	// Build the list of (repo, pipeline, steps) tuples we need to emit a
+	// report for. By default each repo gets one tuple sharing the global
+	// --steps-file numbers (legacy "monorepo" behaviour). When --repo-path
+	// is given for a repo, cidetect scans the local checkout and we emit one
+	// *distinct* report per detected CI YAML, with steps derived from the
+	// pipeline definition itself — different repos with different pipelines
+	// finally produce different energy/carbon numbers.
+	pathByRepo := repoPaths.parseMap()
+	type job struct {
+		repo         string
+		workflowName string // name shown in the report (and used to slug filenames)
+		pipelinePath string // optional, recorded as label
+		platform     string // overrides --platform when detected
+		steps        []stepSample
+	}
+	var jobs []job
+	for _, repoName := range repos {
+		if rp, ok := pathByRepo[repoName]; ok {
+			pls, derr := cidetect.Detect(rp)
+			if derr != nil {
+				fmt.Fprintf(os.Stderr, "warning: cidetect %s: %v — falling back to --steps-file\n", repoName, derr)
 			}
-		}
-		if src == "" {
-			src = "rapl"
-		}
-		kwh += s.GPUKWh
-		totalKWh += kwh
-		reportSteps = append(reportSteps, model.Step{
-			Name:            s.Name,
-			KWh:             round(kwh, 6),
-			DurationSeconds: s.DurationSeconds,
-			Source:          src,
-			CPUUtilPct:      s.CPUUtilPct,
-			GPUKWh:          s.GPUKWh,
-		})
-	}
-
-	// Try RAPL probe automatically (Linux self-hosted) if no value provided
-	// and no per-step energy was given. Quiet failure → keeps eco-ci fallback.
-	if *raplKWh < 0 && totalKWh == 0 {
-		if p, ok, err := rapl.Available(); err == nil && ok {
-			if startErr := p.Start(); startErr == nil {
-				// Tiny sample window — useful only if the caller wraps a step.
-				// In practice the orchestrator calls --rapl-kwh with a pre-measured value.
-				time.Sleep(50 * time.Millisecond)
-				if v, _ := p.Sample(); v > 0 {
-					totalKWh = v
-					reportSteps = append(reportSteps, model.Step{Name: "rapl-instant", KWh: round(v, 6), Source: "rapl"})
-				}
+			if len(pls) == 0 {
+				fmt.Fprintf(os.Stderr, "warning: no CI pipelines detected in %s for %s — using --steps-file\n", rp, repoName)
+				jobs = append(jobs, job{repo: repoName, workflowName: *workflow, steps: steps})
+				continue
 			}
+			for _, p := range pls {
+				js := pipelineToSteps(p)
+				jobs = append(jobs, job{
+					repo:         repoName,
+					workflowName: p.Name,
+					pipelinePath: p.RelPath,
+					platform:     p.Platform,
+					steps:        js,
+				})
+			}
+		} else {
+			jobs = append(jobs, job{repo: repoName, workflowName: *workflow, steps: steps})
 		}
 	}
-	if *raplKWh >= 0 {
-		totalKWh = *raplKWh
-		// Replace synthetic single-step entry to make the source explicit.
-		if len(reportSteps) == 0 {
-			reportSteps = append(reportSteps, model.Step{Name: "rapl", KWh: round(*raplKWh, 6), Source: "rapl"})
-		}
+	if len(jobs) == 0 {
+		check(fmt.Errorf("no jobs to process"))
 	}
 
-	// Grid intensity.
+	// Energy aggregation is performed *per job* below (one job = one report).
+	// We keep grid resolution + base RAPL probe at the top level because they
+	// are run-wide (same runner, same time window).
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	gridR, err := grid.New(*emapsTok).Resolve(ctx, *region)
 	check(err)
 
-	// Embodied carbon (Boavizta with CCF-static fallback). Override via flag.
-	embRes := embodied.Resolver{HTTPClient: &http.Client{Timeout: 6 * time.Second},
-		BaseURL: "https://api.boavizta.org/v1", LifetimeYears: embodied.DefaultLifetimeYears}
-	runDuration := endT.Sub(startT).Seconds()
-	emb := embRes.Resolve(ctx, *cpuModel, runDuration)
-	embodiedG := emb.GCO2eqForRun
-	embSource := emb.Source
-	if *embodiedOverride >= 0 {
-		embodiedG = *embodiedOverride
-		embSource = "user-override"
-	}
-
-	// SCI.
-	op, total, sciVal := sci.Compute(totalKWh, gridR.ValueGCO2eqPerKWh, embodiedG, *rValue)
-
-	r := model.Report{
-		Schema:         model.SchemaURL,
-		SpecVersion:    model.SpecVersion,
-		SCISpecVersion: model.SCISpecVersion,
-		Run: model.Run{
-			ID:              firstNonEmpty(*runID, fmt.Sprintf("local-%d", time.Now().Unix())),
-			Platform:        *platform,
-			Repository:      *repo,
-			Workflow:        *workflow,
-			Ref:             *ref,
-			CommitSha:       strings.ToLower(*commit),
-			StartedAt:       startT,
-			EndedAt:         endT,
-			DurationSeconds: endT.Sub(startT).Seconds(),
-		},
-		Runner: model.Runner{
-			OS: strings.ToLower(*os_), Arch: *arch, VCPU: *vcpu, RAMGiB: *ramGiB,
-			CPUModel: *cpuModel, TDPWatts: *tdp, Provider: *provider, Region: *region,
-		},
-		Energy: model.Energy{TotalKWh: round(totalKWh, 6), ByStep: reportSteps},
-		Carbon: model.Carbon{
-			OperationalGCO2eq: round(op, 3),
-			EmbodiedGCO2eq:    round(embodiedG, 3),
-			TotalGCO2eq:       round(total, 3),
-			GridIntensity: model.GridIntensity{
-				ValueGCO2eqPerKWh: gridR.ValueGCO2eqPerKWh,
-				Source:            gridR.Source,
-				Zone:              gridR.Zone,
-				Timestamp:         gridR.Timestamp,
-			},
-			EmbodiedSource: embSource,
-		},
-		SCI: model.SCI{Value: round(sciVal, 3), Unit: "gCO2eq", FunctionalUnit: *funcUnit, R: *rValue},
-	}
-	if *cacheHit {
-		r.Cache = &model.Cache{Hit: true}
-	}
-	if *team != "" || *costCtr != "" {
-		r.Metadata = &model.Metadata{Team: *team, CostCenter: *costCtr}
-	}
-
-	// Emit.
-	buf, err := json.MarshalIndent(r, "", "  ")
-	check(err)
-	if *out == "-" {
-		_, _ = os.Stdout.Write(buf)
-		_, _ = os.Stdout.Write([]byte("\n"))
-	} else {
-		check(os.WriteFile(*out, buf, 0o644))
-		fmt.Fprintf(os.Stderr, "wrote %s (SCI=%.3f gCO2eq, E=%.6f kWh, I=%.0f gCO2eq/kWh, source=%s)\n",
-			*out, r.SCI.Value, r.Energy.TotalKWh, r.Carbon.GridIntensity.ValueGCO2eqPerKWh, r.Carbon.GridIntensity.Source)
-	}
-
-	// OTLP export (best-effort).
-	if *otlpURL != "" {
-		exp := otlp.New(*otlpURL)
-		if *otlpAuth != "" {
-			parts := strings.SplitN(*otlpAuth, ":", 2)
-			if len(parts) == 2 {
-				exp.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	// Try a one-shot RAPL probe (Linux self-hosted, when no per-step kWh given).
+	var raplBaseKWh float64
+	if *raplKWh < 0 {
+		if p, ok, perr := rapl.Available(); perr == nil && ok {
+			if startErr := p.Start(); startErr == nil {
+				time.Sleep(50 * time.Millisecond)
+				if v, _ := p.Sample(); v > 0 {
+					raplBaseKWh = v
+				}
 			}
 		}
-		if err := exp.Export(ctx, &r); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: OTLP export failed: %v\n", err)
+	}
+
+	embRes := embodied.Resolver{HTTPClient: &http.Client{Timeout: 6 * time.Second},
+		BaseURL: "https://api.boavizta.org/v1", LifetimeYears: embodied.DefaultLifetimeYears}
+
+	baseRunID := firstNonEmpty(*runID, fmt.Sprintf("local-%d", time.Now().Unix()))
+
+	// Build one report per (repo, pipeline) tuple. Each tuple has its own
+	// steps list, hence its own energy/carbon — fixing the previous bug where
+	// every repo received an identical clone of the global --steps-file.
+	for idx, j := range jobs {
+		// 1. Per-job energy aggregation.
+		var totalKWh float64
+		reportSteps := make([]model.Step, 0, len(j.steps))
+		for _, s := range j.steps {
+			kwh := s.KWh
+			src := s.Source
+			if kwh == 0 {
+				kwh = ecoci.EstimateKWh(*tdp, s.CPUUtilPct, s.DurationSeconds)
+				if src == "" {
+					src = "eco-ci-model"
+				}
+			}
+			if src == "" {
+				src = "rapl"
+			}
+			kwh += s.GPUKWh
+			totalKWh += kwh
+			reportSteps = append(reportSteps, model.Step{
+				Name:            s.Name,
+				KWh:             round(kwh, 6),
+				DurationSeconds: s.DurationSeconds,
+				Source:          src,
+				CPUUtilPct:      s.CPUUtilPct,
+				GPUKWh:          s.GPUKWh,
+			})
+		}
+		if *raplKWh >= 0 {
+			totalKWh = *raplKWh
+			if len(reportSteps) == 0 {
+				reportSteps = append(reportSteps, model.Step{Name: "rapl", KWh: round(*raplKWh, 6), Source: "rapl"})
+			}
+		} else if raplBaseKWh > 0 && totalKWh == 0 {
+			totalKWh = raplBaseKWh
+			reportSteps = append(reportSteps, model.Step{Name: "rapl-instant", KWh: round(raplBaseKWh, 6), Source: "rapl"})
+		}
+
+		// 2. Effective wall duration for embodied amortisation: max(end-start,
+		// sum(steps)). Without this, a caller passing only --start ends up with
+		// embodied ≈ 0 g (regression observed before this fix).
+		stepsDuration := 0.0
+		for _, s := range j.steps {
+			stepsDuration += s.DurationSeconds
+		}
+		effectiveDuration := endT.Sub(startT).Seconds()
+		if stepsDuration > effectiveDuration {
+			effectiveDuration = stepsDuration
+		}
+		jobEnd := endT
+		if stepsDuration > endT.Sub(startT).Seconds() && stepsDuration > 0 {
+			jobEnd = startT.Add(time.Duration(stepsDuration * float64(time.Second)))
+		}
+
+		emb := embRes.Resolve(ctx, *cpuModel, effectiveDuration)
+		embodiedG := emb.GCO2eqForRun
+		embSource := emb.Source
+		if *embodiedOverride >= 0 {
+			embodiedG = *embodiedOverride
+			embSource = "user-override"
+		}
+
+		// 3. SCI.
+		op, total, sciVal := sci.Compute(totalKWh, gridR.ValueGCO2eqPerKWh, embodiedG, *rValue)
+
+		// 4. Distinct run.id per (repo, pipeline) so the ingester (idempotent
+		// upsert on id) doesn't overwrite previous tuples.
+		runIDForJob := baseRunID
+		if len(jobs) > 1 {
+			runIDForJob = fmt.Sprintf("%s-%s-%s", baseRunID, slugRepo(j.repo), slugRepo(j.workflowName))
+		}
+
+		platform := *platform
+		if j.platform != "" {
+			platform = j.platform
+		}
+
+		r := model.Report{
+			Schema:         model.SchemaURL,
+			SpecVersion:    model.SpecVersion,
+			SCISpecVersion: model.SCISpecVersion,
+			Run: model.Run{
+				ID:              runIDForJob,
+				Platform:        platform,
+				Repository:      j.repo,
+				Workflow:        j.workflowName,
+				Ref:             *ref,
+				CommitSha:       strings.ToLower(*commit),
+				StartedAt:       startT,
+				EndedAt:         jobEnd,
+				DurationSeconds: jobEnd.Sub(startT).Seconds(),
+			},
+			Runner: model.Runner{
+				OS: strings.ToLower(*os_), Arch: *arch, VCPU: *vcpu, RAMGiB: *ramGiB,
+				CPUModel: *cpuModel, TDPWatts: *tdp, Provider: *provider, Region: *region,
+			},
+			Energy: model.Energy{TotalKWh: round(totalKWh, 6), ByStep: reportSteps},
+			Carbon: model.Carbon{
+				OperationalGCO2eq: round(op, 3),
+				EmbodiedGCO2eq:    round(embodiedG, 3),
+				TotalGCO2eq:       round(total, 3),
+				GridIntensity: model.GridIntensity{
+					ValueGCO2eqPerKWh: gridR.ValueGCO2eqPerKWh,
+					Source:            gridR.Source,
+					Zone:              gridR.Zone,
+					Timestamp:         gridR.Timestamp,
+				},
+				EmbodiedSource: embSource,
+			},
+			SCI: model.SCI{Value: round(sciVal, 3), Unit: "gCO2eq", FunctionalUnit: *funcUnit, R: *rValue},
+		}
+		if *cacheHit {
+			r.Cache = &model.Cache{Hit: true}
+		}
+		// Always populate metadata when the multi-repo or per-pipeline path is
+		// used, so downstream tools can group runs.
+		if *team != "" || *costCtr != "" || j.pipelinePath != "" || len(repos) > 1 {
+			if r.Metadata == nil {
+				r.Metadata = &model.Metadata{}
+			}
+			r.Metadata.Team = *team
+			r.Metadata.CostCenter = *costCtr
+			if r.Metadata.Labels == nil {
+				r.Metadata.Labels = map[string]string{}
+			}
+			if j.pipelinePath != "" {
+				r.Metadata.Labels["pipeline_path"] = j.pipelinePath
+				r.Metadata.Labels["pipeline_source"] = "ci-detect"
+			}
+			if len(repos) > 1 {
+				r.Metadata.Labels["repositories"] = strings.Join(repos, ",")
+			}
+		}
+
+		// 5. Emit. Multi-pipeline output paths include both the repo *and* the
+		// pipeline slug to avoid collisions when one repo has several workflows.
+		r.Suggestions = suggest.For(&r)
+		buf, err := json.MarshalIndent(r, "", "  ")
+		check(err)
+		outPath := resolveOutPathV2(*out, j.repo, j.workflowName, idx, len(jobs))
+		if outPath == "-" {
+			_, _ = os.Stdout.Write(buf)
+			_, _ = os.Stdout.Write([]byte("\n"))
 		} else {
-			fmt.Fprintf(os.Stderr, "pushed OTLP metrics to %s/v1/metrics\n", *otlpURL)
+			check(os.WriteFile(outPath, buf, 0o644))
+			fmt.Fprintf(os.Stderr, "wrote %s (repo=%s, workflow=%s, SCI=%.3f gCO2eq, E=%.6f kWh, embodied=%.3f gCO2eq, I=%.0f gCO2eq/kWh, source=%s)\n",
+				outPath, j.repo, j.workflowName, r.SCI.Value, r.Energy.TotalKWh, r.Carbon.EmbodiedGCO2eq, r.Carbon.GridIntensity.ValueGCO2eqPerKWh, r.Carbon.GridIntensity.Source)
+		}
+
+		// 6. OTLP export (best-effort).
+		if *otlpURL != "" {
+			exp := otlp.New(*otlpURL)
+			if *otlpAuth != "" {
+				parts := strings.SplitN(*otlpAuth, ":", 2)
+				if len(parts) == 2 {
+					exp.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+			}
+			if err := exp.Export(ctx, &r); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: OTLP export failed for %s/%s: %v\n", j.repo, j.workflowName, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "pushed OTLP metrics for %s/%s to %s/v1/metrics\n", j.repo, j.workflowName, *otlpURL)
+			}
 		}
 	}
 }
@@ -344,6 +454,54 @@ func normalizeArch(a string) string {
 	}
 }
 func firstNonEmpty(a, b string) string { if a != "" { return a }; return b }
+
+// splitRepos parses a comma-separated repository list and returns the unique,
+// non-empty, trimmed entries. Always returns at least one element.
+func splitRepos(s string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, r := range strings.Split(s, ",") {
+		r = strings.TrimSpace(r)
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		return []string{"local/repo"}
+	}
+	return out
+}
+
+// slugRepo turns "org/app name:v2" into "org_app_name_v2" — used to build a
+// distinct run.id per repo and to suffix output filenames.
+func slugRepo(repo string) string {
+	return strings.NewReplacer("/", "_", " ", "_", ":", "_").Replace(strings.TrimSpace(repo))
+}
+
+// resolveOutPath returns the destination path for one report in a multi-repo
+// run. Substitutes the literal token "{repo}" anywhere in the template; if the
+// template contains no placeholder and there are several repos, the slugified
+// repo name is inserted before the file extension to avoid overwriting.
+func resolveOutPath(template, repo string, idx, total int) string {
+	if template == "-" {
+		return "-"
+	}
+	slug := slugRepo(repo)
+	if strings.Contains(template, "{repo}") {
+		return strings.ReplaceAll(template, "{repo}", slug)
+	}
+	if total <= 1 {
+		return template
+	}
+	// Insert "-<slug>" before the extension. e.g. energy-report.json → energy-report-orgapp.json
+	dot := strings.LastIndex(template, ".")
+	if dot < 0 || dot < strings.LastIndex(template, "/") {
+		return fmt.Sprintf("%s-%s", template, slug)
+	}
+	return template[:dot] + "-" + slug + template[dot:]
+}
 func parseTimeOr(s string, def time.Time) time.Time {
 	if s == "" {
 		return def
@@ -366,5 +524,65 @@ func check(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// multiFlag implements flag.Value to accept --repo-path multiple times.
+// Each entry must be of the form "repo/slug=/abs/or/relative/path".
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
+func (m multiFlag) parseMap() map[string]string {
+	out := map[string]string{}
+	for _, e := range m {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			fmt.Fprintf(os.Stderr, "warning: ignoring malformed --repo-path %q (expected slug=path)\n", e)
+			continue
+		}
+		out[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+	return out
+}
+
+// pipelineToSteps converts a cidetect.Pipeline into the stepSample shape
+// consumed by the aggregator's energy loop. Source is preserved so the
+// emitted report carries source="ci-detect-heuristic" on every step.
+func pipelineToSteps(p cidetect.Pipeline) []stepSample {
+	out := make([]stepSample, 0, len(p.Steps))
+	for _, s := range p.Steps {
+		out = append(out, stepSample{
+			Name:            s.Name,
+			DurationSeconds: s.DurationSeconds,
+			CPUUtilPct:      s.CPUUtilPct,
+			Source:          s.Source,
+		})
+	}
+	return out
+}
+
+// resolveOutPathV2 picks an output filename per (repo, workflow) tuple. It
+// supports the {repo} and {workflow} placeholders; falls back to inserting
+// "-<repo>-<workflow>" before the extension when no placeholder is present
+// and there is more than one tuple to emit.
+func resolveOutPathV2(template, repo, workflow string, idx, total int) string {
+	if template == "-" {
+		return "-"
+	}
+	repoSlug := slugRepo(repo)
+	wfSlug := slugRepo(workflow)
+	if strings.Contains(template, "{repo}") || strings.Contains(template, "{workflow}") {
+		s := strings.ReplaceAll(template, "{repo}", repoSlug)
+		s = strings.ReplaceAll(s, "{workflow}", wfSlug)
+		return s
+	}
+	if total <= 1 {
+		return template
+	}
+	dot := strings.LastIndex(template, ".")
+	if dot < 0 || dot < strings.LastIndex(template, "/") {
+		return fmt.Sprintf("%s-%s-%s", template, repoSlug, wfSlug)
+	}
+	return template[:dot] + "-" + repoSlug + "-" + wfSlug + template[dot:]
 }
 

@@ -3,6 +3,7 @@
 > Measure the **energy consumption** and **carbon footprint** of every CI/CD pipeline run.
 > Emit **SCI-compliant JSON** ([ISO/IEC 21031:2024](https://sci.greensoftware.foundation/)).
 > Visualize it in either a **server-backed Grafana stack** or a **zero-dependency embedded HTML/JS/CSS dashboard**.
+> Works for **single repos *and* monorepo / multi-repo builds** — one SCI report per repository, in one invocation.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Schema](https://img.shields.io/badge/schema-v1.0.0-informational)](docs/schema/v1.json)
@@ -25,6 +26,15 @@ Companion project to the AXA Summit 2026 talk *"Build-Time Energy: The Invisible
 | **Local / any CLI**    | run `cienergy-aggregator` directly | ✅ v1 |
 
 The aggregator **auto-detects** the platform from env vars (`TF_BUILD`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`) — the same binary works everywhere.
+
+### Repository scope
+
+| Layout | How |
+|---|---|
+| **Single repository**          | default behaviour — `--repo myorg/myapp` (or auto-detected from `GITHUB_REPOSITORY` / `BUILD_REPOSITORY_NAME` / `CI_PROJECT_PATH` / `GIT_URL`) → one `energy-report.json`. |
+| **Monorepo / multi-repo run**  | pass a comma-separated list: `--repo "myorg/app1,myorg/app2,myorg/lib"`. The aggregator emits **one report per repository** with the same energy/runner figures and a distinct `run.repository`, plus a `metadata.labels.repositories` field listing the full peer set for traceability. |
+
+Use `{repo}` in `--out` to template the destination (e.g. `--out ./reports/cienergy-{repo}.json`); if `--out` has no placeholder, the slug is appended automatically before the extension (`energy-report.json` → `energy-report-myorg_app1.json`). The OTLP exporter pushes one set of metrics per repository so the `repository` dimension is preserved downstream.
 
 ### 1. GitHub Actions
 
@@ -82,12 +92,33 @@ Two ways:
 
 | Mode | Command | Backend? | Use case |
 |---|---|---|---|
-| **A — Grafana** | `cd dashboard/grafana && docker compose up` | Postgres + Grafana | org-wide rollout, long-term trends |
+| **A — Grafana** | `cd dashboard/grafana && podman compose up` | Postgres + Grafana | org-wide rollout, long-term trends |
 | **B — Embedded** | open `dashboard/embedded/index.html` in a browser | none | per-PR review, demo, air-gapped |
 
 Mode B reads `energy-report.json` files directly (drag-and-drop, file picker, or `?src=` URL), runs in any browser, and weighs < 200 KB.
 
 ### 4. Run locally without GitHub Actions
+
+#### Quickest path — `./run.sh`
+
+A one-shot entry point that **builds + aggregates 4 demo repos + ingests + opens the dashboard**:
+
+```sh
+./run.sh                        # uses defaults
+INGESTER_TOKEN=xxx ./run.sh     # if the ingester requires bearer auth
+REPOS="axa/claims,axa/policy" REGION=FR ./run.sh
+```
+
+What it does, in order:
+
+1. Builds `./bin/cienergy-aggregator` if missing (`go build`).
+2. Runs the aggregator in multi-repo mode → writes `./reports/cienergy-<repo>.json` per repo.
+3. Probes `${INGESTER_URL}/readyz` (default `http://localhost:8085`). If it answers `200`, POSTs every report to `/v1/runs` then **GETs `/v1/runs?limit=200` to verify the rows are actually persisted in Postgres** (prints id / repository / startedAt / sci for each).
+4. Stages the reports under `dashboard/embedded/local-reports/` with an auto-generated `index.json`, starts a tiny local HTTP server (`python3 -m http.server`) on `${DASHBOARD_PORT}` (default `8086`), and opens `http://127.0.0.1:8086/index.html?src=./local-reports/index.json` in your default browser — the dashboard **auto-loads the freshly generated reports**, no drag-drop required (set `OPEN_DASHBOARD=0` to skip). To stop the static server later: `kill $(cat /tmp/cienergy-dashboard-8086.pid)`.
+
+All knobs are env-vars: `REGION`, `REPOS`, `STEPS_FILE`, `OUT_TEMPLATE` (supports `{repo}`), `INGESTER_URL`, `INGESTER_TOKEN`, `DASHBOARD_PORT`, `OPEN_DASHBOARD`.
+
+#### Or call the binary directly
 
 ```sh
 make build
@@ -103,11 +134,25 @@ make build
   --commit "$(git rev-parse HEAD 2>/dev/null || echo 0000000)" \
   --steps-file ./examples/samples/steps.jsonl \
   --out energy-report.json
+
+# Monorepo / multi-repo run — one SCI report per repository
+# (same energy & runner figures, distinct run.repository).
+./bin/cienergy-aggregator \
+  --start "$(date -u +%FT%TZ)" \
+  --region FR \
+  --repo "axa/claims,axa/policy,axa/shared-lib" \
+  --steps-file ./examples/samples/steps.jsonl \
+  --out ./reports/cienergy-{repo}.json
+# → ./reports/cienergy-axa_claims.json
+#   ./reports/cienergy-axa_policy.json
+#   ./reports/cienergy-axa_shared-lib.json
 ```
 
 > **Notes**
 > - `--region` is an [Electricity Maps zone code](https://www.electricitymaps.com/) (e.g. `US-VA`, `FR`, `WE`), **not** a cloud-region code. Unknown values fall back to the bundled `WORLD` average.
 > - `--commit` is optional; without it, the aggregator records `0000000`.
+> - `--repo` accepts **one or more comma-separated slugs**. With more than one, the aggregator writes one report per repository; use `{repo}` in `--out` to template the path, or let the slug be appended automatically before the extension. The full peer list is preserved in `metadata.labels.repositories` for traceability. See [Binaries → `cienergy-aggregator`](#cienergy-aggregator) for the full flag reference.
+> - **Embodied carbon accuracy.** Even when you only pass `--start` (no `--end`), the amortisation share is computed from `max(endT − startT, Σ step durations)`, so the Scope-3.1 figure reflects the real work done in the steps file instead of the aggregator's own wall-clock.
 > - The shortcut `make sample` runs the same command and writes the report next to the embedded dashboard so you can open it immediately.
 
 ## What we measure
@@ -169,7 +214,8 @@ Key flags:
 | Flag | Default | Notes |
 |---|---|---|
 | `--steps-file` | *(required)* | JSONL, one `{name,durationSeconds,cpuUtilPct,kWh?,gpuKWh?,source?}` per line |
-| `--out`         | `energy-report.json` | use `-` for stdout |
+| `--out`         | `energy-report.json` | use `-` for stdout · supports `{repo}` placeholder for multi-repo runs |
+| `--repo`        | auto-detected | one or more comma-separated slugs (`org/app1,org/app2`) → one report per repo |
 | `--region`      | `WORLD` | Electricity Maps zone (`FR`, `US-VA`, `WE`…) |
 | `--rapl-kwh`    | `-1` | bypass model, inject a measured kWh value |
 | `--embodied-gco2eq` | `-1` | override Boavizta result |
@@ -179,6 +225,26 @@ Key flags:
 
 Env shortcuts: `CIENERGY_EMAPS_TOKEN`, `CIENERGY_TEAM`, `CIENERGY_COST_CENTER`,
 `CIENERGY_OTLP_ENDPOINT`, `CIENERGY_OTLP_HEADER`.
+
+> **Multi-repo / monorepo runs.** Pass several slugs to `--repo` to emit one
+> SCI report per repository (same energy / runner figures, distinct
+> `run.repository`). The full list is preserved in `metadata.labels.repositories`
+> for traceability.
+>
+> ```sh
+> ./bin/cienergy-aggregator \
+>   --repo "axa/claims,axa/policy,axa/shared-lib" \
+>   --out  ./reports/cienergy-{repo}.json \
+>   --steps-file ./steps.jsonl
+> ```
+>
+> If `--out` does not contain `{repo}`, the slug is appended before the
+> extension automatically (e.g. `energy-report.json` → `energy-report-axa_claims.json`).
+
+> **Embodied carbon accuracy.** The amortisation share is computed from the
+> effective run duration: `max(endT − startT, Σ step durations)`. This means
+> you can pass only `--start` (without `--end`) and still get a representative
+> Scope-3.1 figure based on the work actually done in the steps file.
 
 ---
 
@@ -279,7 +345,7 @@ replicas behind a load balancer. Container image is built from
 ```sh
 export POSTGRES_URL="postgres://cienergy:cienergy@localhost:5432/cienergy?sslmode=disable"
 export INGESTER_TOKEN="$(openssl rand -hex 24)"   # optional
-export PORT=8080
+export PORT=8085
 
 ./bin/cienergy-ingester
 ```
@@ -305,6 +371,148 @@ Endpoints:
 
 Env vars: `PORT`, `POSTGRES_URL`, `INGESTER_TOKEN` (optional Bearer-auth),
 `MAX_BODY_BYTES` (default `1048576`).
+
+### `cienergy-cidetect`
+
+Scans a repository for CI/build YAML files and turns each detected pipeline
+into a measurable JSONL steps file. Used by `cienergy-aggregator` to produce
+**distinct** energy/carbon numbers per repo (instead of the legacy "monorepo"
+mode that copied the same numbers onto every repo).
+
+Detected platforms:
+
+| Platform        | Files inspected                                         |
+|-----------------|---------------------------------------------------------|
+| GitHub Actions  | `.github/workflows/*.yml`, `*.yaml` (one report per file) |
+| GitLab CI       | `.gitlab-ci.yml`                                        |
+| Azure Pipelines | `azure-pipelines.yml`, `azure-pipelines.yaml`, `.azure-pipelines.yml` |
+| Jenkins         | `Jenkinsfile` (heuristic — opaque, modelled as 3 steps) |
+| Tekton          | `tekton/*.yaml`, `.tekton/*.yaml`                       |
+
+Steps are classified by intent (`checkout`, `setup`, `build`, `test`,
+`docker`, `lint`, `security-scan`, `deploy`, `artifact`, `comment`, `shell`)
+with conservative `(durationSeconds, cpuUtilPct)` heuristics. Every emitted
+step records `source: "ci-detect-heuristic"` so dashboards can flag modelled
+data.
+
+```sh
+# Inspect what would be detected:
+./bin/cienergy-cidetect --repo ./path/to/repo
+
+# Dump JSONL steps for a single pipeline (the first one):
+./bin/cienergy-cidetect --repo ./path/to/repo --jsonl
+
+# Wire into the aggregator: one *distinct* report per (repo, pipeline)
+./bin/cienergy-aggregator \
+  --repo "axa/claims,axa/policy,myorg/api" \
+  --repo-path "axa/claims=./checkouts/claims" \
+  --repo-path "axa/policy=./checkouts/policy" \
+  --repo-path "myorg/api=./checkouts/api" \
+  --steps-file ./examples/samples/steps.jsonl \
+  --out "./reports/cienergy-{repo}-{workflow}.json"
+```
+
+When `--repo-path slug=path` is provided, the global `--steps-file` becomes a
+fallback used only for repos *without* a path. Repos with multiple workflow
+files generate one report per file, all carrying
+`metadata.labels.pipeline_path` so the dashboard can roll up per pipeline.
+
+Or via `run.sh`:
+
+```sh
+REPO_PATHS='axa/claims=./checkouts/claims,axa/policy=./checkouts/policy' ./run.sh
+```
+
+## Improvement suggestions
+
+Every `energy-report.json` now ships with a `suggestions[]` array. The
+aggregator runs ~10 deterministic heuristics over the report's own numbers
+(dependency-cache miss, podman layer cache, long tests, dirty grid zone,
+ARM runners, oversized runner, redundant builds, missing path filters,
+artifact bloat, missing cache savings instrumentation). Each suggestion
+carries:
+
+| Field | Meaning |
+|---|---|
+| `id`                       | Stable identifier (e.g. `enable-dependency-cache`)        |
+| `severity`                 | `critical` · `major` · `minor` · `info`                   |
+| `title` / `detail`         | Human-readable summary + actionable detail                |
+| `estimatedSavingKWh`       | Upper-bound kWh saved if the suggestion is applied        |
+| `estimatedSavingGCO2eq`    | Same, expressed in gCO₂eq using the run's grid intensity  |
+| `reference`                | Link to the upstream documentation                        |
+
+**Local dashboard (Mode B)** — the embedded SPA renders a *💡 Improvement
+suggestions* card under the runs table, grouped per report, with a severity
+selector at the top. Each row shows a colour-coded severity pill, the
+detail text, the upstream doc link, and the upper-bound savings.
+
+**Grafana (Mode A)** — provisioned dashboard
+[`cienergy — improvement suggestions`](dashboard/grafana/dashboards/cienergy-suggestions.json)
+(uid `cienergy-suggestions`) renders, against the auto-migrated
+`v_run_suggestions` view: total open suggestions / potential save / repo
+count (stat row), top suggestions by gCO₂eq saved (bar gauge), severity
+donut, per-repo leaderboard, and a filterable details table. Two template
+variables — `severity` (min level) and `repository` (multi-select).
+
+The aggregator never fails on suggestions and they are stored as JSONB in
+Postgres (`runs.suggestions` column, auto-added on startup by the
+ingester), so older runs without the field keep working.
+
+## OpenTelemetry Collector (OTLP)
+
+In addition to the Postgres-backed ingester, `cienergy-aggregator` can push its
+report as **OpenTelemetry metrics** (OTLP/HTTP-JSON) to any collector — OTel
+Collector, Grafana Alloy, Datadog, Honeycomb, New Relic, etc. This is the
+recommended path when you already run an observability stack and want CI
+energy to live next to your existing app metrics.
+
+### What gets emitted
+
+Seven `Gauge` metrics, one resource per run, attributes aligned with the
+[OpenTelemetry sustainability semantic conventions (draft)](https://github.com/open-telemetry/semantic-conventions/issues/1129):
+
+| Metric                                       | Unit          | Meaning                                          |
+|----------------------------------------------|---------------|--------------------------------------------------|
+| `cienergy.energy.kwh`                        | `kWh`         | Total energy of the run                          |
+| `cienergy.carbon.operational.gco2eq`         | `gCO2eq`      | Scope 2 (location-based)                         |
+| `cienergy.carbon.embodied.gco2eq`            | `gCO2eq`      | Scope 3 cat. 1 (amortised)                       |
+| `cienergy.carbon.total.gco2eq`               | `gCO2eq`      | Operational + embodied                           |
+| `cienergy.grid.intensity.gco2eq_per_kwh`     | `gCO2eq/kWh`  | Grid intensity at runner location at run time    |
+| `cienergy.sci.value`                         | `gCO2eq`      | SCI per functional unit (ISO/IEC 21031:2024)     |
+| `cienergy.run.duration.seconds`              | `s`           | Wall-clock duration                              |
+
+Resource attributes: `service.name=cienergy`, `service.namespace=<repo>`,
+`ci.platform`, `ci.workflow`, `ci.run.id`, `ci.commit.sha`, `host.arch`,
+`host.cpu.model.name`, `cloud.region`, `sustainability.grid.{zone,source}`,
+`sustainability.sci.functional_unit`, plus `team` / `cost_center` when set.
+
+### Push from any CI job
+
+```sh
+./bin/cienergy-aggregator \
+  --steps-file steps.jsonl \
+  --region FR \
+  --otlp-endpoint http://otel-collector.observability:4318 \
+  --otlp-header  "Authorization: Bearer $OTEL_TOKEN"
+```
+
+Or via env: `CIENERGY_OTLP_ENDPOINT`, `CIENERGY_OTLP_HEADER`. Empty endpoint =
+no-op (safe default).
+
+### Local end-to-end demo
+
+The Mode-A stack already bundles an OTel Collector (`otel/opentelemetry-collector-contrib:0.110.0`)
+and a Prometheus, both pre-wired to the provisioned **`cienergy — OTLP live
+metrics`** Grafana dashboard:
+
+```sh
+make stack-up        # Postgres + ingester + Grafana + otel-collector + Prometheus
+make otlp-demo       # build, run the sample, push to http://localhost:4318
+open http://localhost:3000/d/cienergy-otlp
+```
+
+Collector endpoints exposed: `4318` (OTLP/HTTP), `4317` (OTLP/gRPC),
+`8889` (`/metrics` for Prometheus scrape).
 
 ## License
 

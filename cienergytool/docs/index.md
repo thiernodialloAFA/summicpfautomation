@@ -108,8 +108,8 @@ Or run the full Grafana stack:
 
 ```sh
 cd dashboard/grafana
-docker compose up -d --build
-# postgres :5432   ingester :8080   grafana :3000
+podman compose up -d --build
+# postgres :5432   ingester :8085   grafana :3000
 make seed-samples
 ```
 

@@ -42,12 +42,113 @@
       </p>
     </section>
 
+    <details id="simulator" class="card simulator hidden" aria-label="what-if scenario simulator">
+      <summary class="sim-summary">
+        <span class="sim-summary-title">
+          <span aria-hidden="true">📐</span> What-if scenario
+        </span>
+        <span class="sim-summary-meta">
+          <span id="simSummaryBadge" class="badge">× 365 runs/yr · measured zones</span>
+          <span class="sim-summary-chev" aria-hidden="true">▾</span>
+        </span>
+      </summary>
+
+      <div class="sim-body">
+        <header class="sim-head">
+          <p class="muted">Project the carbon impact if these builds ran on a different grid, more often, all year.</p>
+          <button id="simResetBtn" class="link" type="button">reset to measured</button>
+        </header>
+
+        <div class="sim-grid">
+          <label class="sim-field">
+            <span>Hosting zone</span>
+            <select id="simZone" aria-describedby="simZoneHelp">
+              <option value="">— as measured —</option>
+              <optgroup label="Europe">
+                <option value="FR">🇫🇷 France · 56 gCO₂eq/kWh</option>
+                <option value="DE">🇩🇪 Germany · 380</option>
+                <option value="PL">🇵🇱 Poland · 660</option>
+                <option value="SE">🇸🇪 Sweden · 30</option>
+                <option value="NO">🇳🇴 Norway · 30</option>
+                <option value="ES">🇪🇸 Spain · 150</option>
+                <option value="IT">🇮🇹 Italy · 270</option>
+                <option value="GB">🇬🇧 United Kingdom · 200</option>
+                <option value="NL">🇳🇱 Netherlands · 330</option>
+                <option value="IE">🇮🇪 Ireland · 290</option>
+              </optgroup>
+              <optgroup label="Americas">
+                <option value="US-VA">🇺🇸 US Virginia · 280</option>
+                <option value="US-CA">🇺🇸 US California · 230</option>
+                <option value="US-TX">🇺🇸 US Texas · 410</option>
+                <option value="CA-QC">🇨🇦 Canada Québec · 30</option>
+                <option value="BR">🇧🇷 Brazil · 100</option>
+              </optgroup>
+              <optgroup label="Asia-Pacific">
+                <option value="IN">🇮🇳 India · 700</option>
+                <option value="CN">🇨🇳 China · 580</option>
+                <option value="JP">🇯🇵 Japan · 460</option>
+                <option value="AU">🇦🇺 Australia (SE) · 540</option>
+                <option value="ZA">🇿🇦 South Africa · 900</option>
+              </optgroup>
+              <option value="WORLD">🌍 World average · 475</option>
+            </select>
+            <small id="simZoneHelp" class="muted">Annual averages, Ember 2024.</small>
+          </label>
+          <label class="sim-field">
+            <span>Runs per day (X)</span>
+            <input id="simRuns" type="number" min="0" step="1" value="1" inputmode="numeric" />
+          </label>
+          <label class="sim-field">
+            <span>Days per year (Y)</span>
+            <input id="simDays" type="number" min="0" max="365" step="1" value="365" inputmode="numeric" />
+          </label>
+          <div class="sim-field sim-multiplier">
+            <span>Projected runs / year</span>
+            <strong id="simMultiplier" class="mono">365</strong>
+          </div>
+        </div>
+
+        <div class="sim-results" aria-live="polite">
+          <article class="card sim-result">
+            <h3>Energy / year</h3>
+            <p id="simKWh" class="kpi">—</p>
+            <p id="simKWhUnit" class="unit">kWh</p>
+          </article>
+          <article class="card sim-result">
+            <h3>Carbon / year</h3>
+            <p id="simCO2" class="kpi">—</p>
+            <p id="simCO2Unit" class="unit">gCO₂eq</p>
+            <p id="simDelta" class="sim-delta">—</p>
+          </article>
+          <article class="card sim-result">
+            <h3>Equivalent</h3>
+            <p id="simEquiv" class="kpi">—</p>
+            <p id="simEquivUnit" class="unit">km in an avg petrol car (170 g/km)</p>
+          </article>
+          <article class="card sim-result">
+            <h3>Scenario grid intensity</h3>
+            <p id="simIntensity" class="kpi">—</p>
+            <p class="unit">gCO₂eq / kWh</p>
+          </article>
+        </div>
+      </div>
+    </details>
+
+    <section id="csrdBanner" class="card csrd-banner hidden" aria-label="csrd export">
+      <div>
+        <h2><span aria-hidden="true">📑</span> CSRD / ESRS E1 export ready</h2>
+        <p class="muted" id="csrdBannerSub">—</p>
+      </div>
+      <a id="csrdDownload" class="btn primary" href="#" download>⇩ Download CSV</a>
+    </section>
+
     <section id="summary" class="summary hidden" aria-label="summary metrics">
       <article class="card"><h2>Runs</h2>          <p id="kpiRuns"   class="kpi">—</p></article>
-      <article class="card"><h2>Total energy</h2>  <p id="kpiKWh"    class="kpi">—</p><p class="unit">kWh</p></article>
-      <article class="card"><h2>Total carbon</h2>  <p id="kpiCO2"    class="kpi">—</p><p class="unit">gCO₂eq</p></article>
-      <article class="card"><h2>Mean SCI</h2>      <p id="kpiSCI"    class="kpi">—</p><p class="unit">gCO₂eq / run</p></article>
-      <article class="card"><h2>Cache savings</h2> <p id="kpiSaved"  class="kpi">—</p><p class="unit">gCO₂eq avoided</p></article>
+      <article class="card"><h2>Total energy</h2>  <p id="kpiKWh"    class="kpi">—</p><p id="kpiKWhUnit"   class="unit">kWh</p></article>
+      <article class="card"><h2>GPU energy</h2>    <p id="kpiGPU"    class="kpi">—</p><p id="kpiGPUUnit"   class="unit">kWh (Σ gpuKWh)</p></article>
+      <article class="card"><h2>Total carbon</h2>  <p id="kpiCO2"    class="kpi">—</p><p id="kpiCO2Unit"   class="unit">gCO₂eq</p></article>
+      <article class="card"><h2>Mean SCI</h2>      <p id="kpiSCI"    class="kpi">—</p><p id="kpiSCIUnit"   class="unit">gCO₂eq / run</p></article>
+      <article class="card"><h2>Cache savings</h2> <p id="kpiSaved"  class="kpi">—</p><p id="kpiSavedUnit" class="unit">gCO₂eq avoided</p></article>
     </section>
 
     <section class="charts hidden" id="charts">
@@ -56,44 +157,112 @@
         <canvas id="chartTrend" aria-label="SCI trend chart"></canvas>
       </article>
       <article class="card chart-card">
-        <h2>Energy breakdown by step</h2>
-        <canvas id="chartBreakdown" aria-label="energy by step"></canvas>
-      </article>
-      <article class="card chart-card">
-        <h2>Runner mix <small>(by total kWh)</small></h2>
-        <canvas id="chartRunnerMix" aria-label="runner mix"></canvas>
-      </article>
-      <article class="card chart-card">
         <h2>Repository leaderboard</h2>
         <canvas id="chartRepoLeader" aria-label="repo leaderboard"></canvas>
       </article>
+      <article class="card chart-card">
+        <h2>Carbon footprint <small id="chartCarbonSub">(operational + embodied, gCO₂eq)</small></h2>
+        <canvas id="chartCarbon" aria-label="carbon footprint per run, operational vs embodied"></canvas>
+      </article>
+      <details class="card chart-card chart-accordion" id="runnerEnergyCard">
+        <summary class="chart-accordion-summary">
+          <span class="chart-accordion-title">Energy by runner architecture
+            <small>(share of total kWh — switch x86 → ARM to cut ~30 %)</small>
+          </span>
+          <span class="chart-accordion-meta">
+            <span id="runnerEnergyBadge" class="muted"></span>
+            <span class="accordion-chev" aria-hidden="true">▾</span>
+          </span>
+        </summary>
+        <div class="chart-accordion-body">
+          <canvas id="chartRunnerMix" aria-label="share of total energy by runner CPU architecture"></canvas>
+          <p id="runnerMixVerdict" class="muted" style="margin:.5rem 0 0;font-size:.85rem;"></p>
+        </div>
+      </details>
+      <details class="card chart-card chart-accordion" id="runnerCarbonCard">
+        <summary class="chart-accordion-summary">
+          <span class="chart-accordion-title">Carbon by runner architecture
+            <small>(share of total gCO₂eq — same fleet, weighted by grid intensity)</small>
+          </span>
+          <span class="chart-accordion-meta">
+            <span id="runnerCarbonBadge" class="muted"></span>
+            <span class="accordion-chev" aria-hidden="true">▾</span>
+          </span>
+        </summary>
+        <div class="chart-accordion-body">
+          <canvas id="chartRunnerCarbon" aria-label="share of total carbon by runner CPU architecture"></canvas>
+          <p id="runnerCarbonVerdict" class="muted" style="margin:.5rem 0 0;font-size:.85rem;"></p>
+        </div>
+      </details>
     </section>
 
-    <section class="card table-card hidden" id="tableCard">
-      <header class="table-head">
-        <h2>Run details</h2>
-        <input id="filterInput" type="search" placeholder="filter by repo / workflow / team…" aria-label="filter runs" />
-      </header>
-      <div class="table-wrap">
-        <table id="runsTable">
-          <thead>
-            <tr>
-              <th data-sort="startedAt">When</th>
-              <th data-sort="repository">Repository</th>
-              <th data-sort="workflow">Workflow</th>
-              <th data-sort="arch">Arch</th>
-              <th data-sort="zone">Zone</th>
-              <th data-sort="intensity">I (gCO₂eq/kWh)</th>
-              <th data-sort="kwh">E (kWh)</th>
-              <th data-sort="co2">Total (gCO₂eq)</th>
-              <th data-sort="sci">SCI</th>
-              <th data-sort="source">Source</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+    <!-- Full-width accordion: detailed step breakdown can have dozens of bars × steps,
+         so it needs the full page width and is closed by default to keep the
+         above-the-fold view tight. The canvas is (re)sized on each open
+         because Chart.js can't measure a hidden <details>. -->
+    <details class="card accordion-card hidden" id="breakdownCard">
+      <summary class="accordion-summary">
+        <span class="accordion-title">📊 Energy breakdown by step <small id="chartBreakdownSub" class="muted"></small></span>
+        <span class="accordion-meta"><span id="breakdownSummaryMeta" class="muted"></span><span class="accordion-chev" aria-hidden="true">▾</span></span>
+      </summary>
+      <div class="accordion-body">
+        <div class="breakdown-canvas-wrap">
+          <canvas id="chartBreakdown" aria-label="energy by step"></canvas>
+        </div>
       </div>
-    </section>
+    </details>
+
+    <details class="card accordion-card suggestions-card hidden" id="suggestionsCard" aria-label="improvement suggestions">
+      <summary class="accordion-summary">
+        <span class="accordion-title">💡 Improvement suggestions <small id="suggestionsSummary" class="muted"></small></span>
+        <span class="accordion-meta">
+          <label class="suggestions-filter" onclick="event.stopPropagation()">
+            <span class="muted">Severity ≥</span>
+            <select id="suggestionsSeverity">
+              <option value="info" selected>info (all)</option>
+              <option value="minor">minor</option>
+              <option value="major">major</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <span class="accordion-chev" aria-hidden="true">▾</span>
+        </span>
+      </summary>
+      <div class="accordion-body">
+        <div id="suggestionsBody" class="suggestions-body"></div>
+      </div>
+    </details>
+
+    <details class="card accordion-card table-card hidden" id="tableCard">
+      <summary class="accordion-summary">
+        <span class="accordion-title">📋 Run details <small id="tableSummaryMeta" class="muted"></small></span>
+        <span class="accordion-meta">
+          <input id="filterInput" type="search" placeholder="filter by repo / workflow / team…" aria-label="filter runs" onclick="event.stopPropagation()" />
+          <span class="accordion-chev" aria-hidden="true">▾</span>
+        </span>
+      </summary>
+      <div class="accordion-body">
+        <div class="table-wrap">
+          <table id="runsTable">
+            <thead>
+              <tr>
+                <th data-sort="startedAt">When</th>
+                <th data-sort="repository">Repository</th>
+                <th data-sort="workflow">Workflow</th>
+                <th data-sort="arch">Arch</th>
+                <th data-sort="zone">Zone</th>
+                <th data-sort="intensity">Grid I</th>
+                <th data-sort="kwh">Energy</th>
+                <th data-sort="co2">Total carbon</th>
+                <th data-sort="sci">SCI</th>
+                <th data-sort="source">Source</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
 
     <section id="errors" class="errors hidden" role="alert"></section>
   </main>

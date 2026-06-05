@@ -1,0 +1,16 @@
+apiVersion: 1
+datasources:
+  - name: cienergy-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: cienergy
+    secureJsonData:
+      password: cienergy
+    jsonData:
+      database: cienergy
+      sslmode: disable
+      postgresVersion: 1600
+    isDefault: true
+    editable: false
+

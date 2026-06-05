@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 39,
+  "title": "cienergy — improvement suggestions",
+  "uid": "cienergy-suggestions",
+  "tags": ["cienergy", "sustainability", "ci", "suggestions"],
+  "timezone": "browser",
+  "time": { "from": "now-30d", "to": "now" },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "severity",
+        "label": "Minimum severity",
+        "query": "critical : 0,major : 1,minor : 2,info : 3",
+        "current": { "text": "info", "value": "3", "selected": true },
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "type": "query",
+        "name": "repository",
+        "label": "Repository",
+        "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+        "query": "SELECT DISTINCT repository FROM runs ORDER BY repository",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Open suggestions",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{
+        "refId": "A",
+        "format": "time_series",
+        "rawQuery": true,
+        "rawSql": "SELECT NOW() AS time, COUNT(*) AS \"open\" FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Potential save / run (kWh)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 4 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{
+        "refId": "A",
+        "format": "time_series",
+        "rawQuery": true,
+        "rawSql": "SELECT NOW() AS time, COALESCE(SUM(saving_kwh), 0) AS \"saveable\" FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Potential save / run (gCO₂eq)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{
+        "refId": "A",
+        "format": "time_series",
+        "rawQuery": true,
+        "rawSql": "SELECT NOW() AS time, COALESCE(SUM(saving_gco2eq), 0) AS \"saveable\" FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Repos with suggestions",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{
+        "refId": "A",
+        "format": "time_series",
+        "rawQuery": true,
+        "rawSql": "SELECT NOW() AS time, COUNT(DISTINCT repository) AS \"repos\" FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity"
+      }]
+    },
+    {
+      "type": "bargauge",
+      "title": "Top suggestions by potential gCO₂eq saved (sum over period)",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": {
+        "defaults": { "unit": "massg", "decimals": 2, "color": { "mode": "continuous-GrYlRd" } }
+      },
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true, "valueMode": "color" },
+      "targets": [{
+        "refId": "A",
+        "format": "table",
+        "rawQuery": true,
+        "rawSql": "SELECT suggestion_id || ' [' || severity || ']' AS metric, SUM(saving_gco2eq) AS value FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity GROUP BY suggestion_id, severity ORDER BY value DESC LIMIT 12"
+      }]
+    },
+    {
+      "type": "piechart",
+      "title": "Suggestions by severity",
+      "gridPos": { "x": 12, "y": 4, "w": 6, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "options": { "legend": { "displayMode": "list", "placement": "right", "values": ["value"] }, "pieType": "donut" },
+      "targets": [{
+        "refId": "A",
+        "format": "table",
+        "rawQuery": true,
+        "rawSql": "SELECT severity AS metric, COUNT(*) AS value FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity GROUP BY severity ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END"
+      }]
+    },
+    {
+      "type": "table",
+      "title": "Repository leaderboard — total potential save",
+      "gridPos": { "x": 18, "y": 4, "w": 6, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "save_gco2eq" }, "properties": [{ "id": "unit", "value": "massg" }, { "id": "decimals", "value": 2 }] },
+          { "matcher": { "id": "byName", "options": "save_kwh" },    "properties": [{ "id": "unit", "value": "kwatth" }, { "id": "decimals", "value": 5 }] }
+        ]
+      },
+      "options": { "sortBy": [{ "displayName": "save_gco2eq", "desc": true }] },
+      "targets": [{
+        "refId": "A",
+        "format": "table",
+        "rawQuery": true,
+        "rawSql": "SELECT repository, COUNT(*) AS suggestions, SUM(saving_kwh) AS save_kwh, SUM(saving_gco2eq) AS save_gco2eq FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity GROUP BY repository ORDER BY save_gco2eq DESC NULLS LAST"
+      }]
+    },
+    {
+      "type": "table",
+      "title": "All suggestions (latest runs)",
+      "gridPos": { "x": 0, "y": 13, "w": 24, "h": 12 },
+      "datasource": { "type": "postgres", "uid": "cienergy-postgres" },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "filterable": true } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "save_gco2eq" }, "properties": [{ "id": "unit", "value": "massg" }, { "id": "decimals", "value": 2 }] },
+          { "matcher": { "id": "byName", "options": "save_kwh" },    "properties": [{ "id": "unit", "value": "kwatth" }, { "id": "decimals", "value": 5 }] },
+          { "matcher": { "id": "byName", "options": "started_at" },  "properties": [{ "id": "unit", "value": "time:YYYY-MM-DD HH:mm" }] }
+        ]
+      },
+      "options": { "sortBy": [{ "displayName": "started_at", "desc": true }] },
+      "targets": [{
+        "refId": "A",
+        "format": "table",
+        "rawQuery": true,
+        "rawSql": "SELECT started_at, repository, workflow, severity, suggestion_id, title, saving_kwh AS save_kwh, saving_gco2eq AS save_gco2eq, detail FROM v_run_suggestions WHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND repository IN ($repository) AND CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END <= $severity ORDER BY started_at DESC, CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 WHEN 'minor' THEN 2 ELSE 3 END, saving_gco2eq DESC LIMIT 200"
+      }]
+    }
+  ]
+}
+

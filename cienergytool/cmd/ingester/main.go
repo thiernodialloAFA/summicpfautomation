@@ -9,7 +9,7 @@
 //   GET  /readyz        — readiness probe (DB ping)
 //
 // Configuration (env):
-//   PORT                — listen port (default 8080)
+//   PORT                — listen port (default 8085)
 //   POSTGRES_URL        — pgx-style DSN (e.g. postgres://user:pass@host:5432/db?sslmode=disable)
 //   INGESTER_TOKEN      — if set, requests must carry  Authorization: Bearer <token>
 //   MAX_BODY_BYTES      — request body size limit (default 1 MiB)
@@ -48,7 +48,7 @@ type server struct {
 }
 
 func main() {
-	port := envOr("PORT", "8080")
+	port := envOr("PORT", "8085")
 	dsn := envOr("POSTGRES_URL", "postgres://cienergy:cienergy@localhost:5432/cienergy?sslmode=disable")
 	token := os.Getenv("INGESTER_TOKEN")
 	maxBody, _ := strconv.ParseInt(envOr("MAX_BODY_BYTES", strconv.Itoa(defaultMaxBody)), 10, 64)
@@ -60,6 +60,27 @@ func main() {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(30 * time.Minute)
+
+	// Best-effort startup migration so older Postgres instances picked up the
+	// suggestions column without recreating the volume. Safe to run on every
+	// boot — IF NOT EXISTS makes both statements idempotent.
+	if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS suggestions JSONB DEFAULT '[]'::jsonb`); err != nil {
+		log.Printf("warning: suggestions column migration: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE OR REPLACE VIEW v_run_suggestions AS
+		SELECT r.started_at, r.repository, r.workflow, r.team, r.grid_zone,
+		       s.value->>'id'                                          AS suggestion_id,
+		       s.value->>'severity'                                    AS severity,
+		       s.value->>'title'                                       AS title,
+		       s.value->>'detail'                                      AS detail,
+		       COALESCE((s.value->>'estimatedSavingKWh')::float, 0)    AS saving_kwh,
+		       COALESCE((s.value->>'estimatedSavingGCO2eq')::float, 0) AS saving_gco2eq,
+		       s.value->>'reference'                                   AS reference
+		FROM runs r,
+		     LATERAL jsonb_array_elements(COALESCE(r.suggestions, '[]'::jsonb)) AS s(value)`); err != nil {
+		log.Printf("warning: v_run_suggestions view migration: %v", err)
+	}
 
 	srv := &server{db: db, token: token, max: maxBody}
 
@@ -231,9 +252,9 @@ func (s *server) upsert(ctx context.Context, r *model.Report, raw []byte) error 
 			operational_gco2eq, embodied_gco2eq, total_gco2eq,
 			sci_value, sci_R, functional_unit,
 			cache_hit, saved_kwh, saved_gco2eq,
-			team, cost_center, labels, raw
+			team, cost_center, labels, suggestions, raw
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			energy_kwh = EXCLUDED.energy_kwh,
@@ -244,6 +265,7 @@ func (s *server) upsert(ctx context.Context, r *model.Report, raw []byte) error 
 			cache_hit = EXCLUDED.cache_hit,
 			saved_kwh = EXCLUDED.saved_kwh,
 			saved_gco2eq = EXCLUDED.saved_gco2eq,
+			suggestions = EXCLUDED.suggestions,
 			raw = EXCLUDED.raw
 	`,
 		r.Run.ID, r.Run.Platform, r.Run.Repository, r.Run.Workflow, r.Run.Ref, r.Run.CommitSha,
@@ -255,6 +277,7 @@ func (s *server) upsert(ctx context.Context, r *model.Report, raw []byte) error 
 		r.SCI.Value, r.SCI.R, r.SCI.FunctionalUnit,
 		cacheHit(r), savedKWh(r), savedGCO2eq(r),
 		metaTeam(r), metaCC(r), metaLabels(r),
+		suggestionsJSON(r),
 		raw,
 	)
 	if err != nil {
@@ -327,6 +350,17 @@ func metaLabels(r *model.Report) []byte {
 		return []byte("null")
 	}
 	b, _ := json.Marshal(r.Metadata.Labels)
+	return b
+}
+
+// suggestionsJSON serialises the improvement suggestions to a JSONB-ready
+// payload. Empty arrays are stored as '[]' (never NULL) so the v_run_suggestions
+// view always behaves the same.
+func suggestionsJSON(r *model.Report) []byte {
+	if len(r.Suggestions) == 0 {
+		return []byte("[]")
+	}
+	b, _ := json.Marshal(r.Suggestions)
 	return b
 }
 

@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 39,
+  "title": "cienergy — OTLP live metrics",
+  "uid": "cienergy-otlp",
+  "tags": ["cienergy", "sustainability", "otlp", "prometheus"],
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Energy (latest)",
+      "description": "cienergy.energy.kwh — last point per run.",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 4 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(cienergy_energy_kwh)", "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+    {
+      "type": "stat",
+      "title": "Operational carbon (Scope 2)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(cienergy_carbon_operational_gco2eq)", "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+    {
+      "type": "stat",
+      "title": "Embodied carbon (Scope 3.1)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(cienergy_carbon_embodied_gco2eq)", "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+    {
+      "type": "stat",
+      "title": "SCI (latest)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "avg(cienergy_sci_value)", "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Energy per run over time",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 4 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } },
+      "targets": [{ "refId": "A",
+        "expr": "cienergy_energy_kwh{service_namespace=~\".+\"}",
+        "legendFormat": "{{service_namespace}}",
+        "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Carbon per run over time",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } },
+      "targets": [
+        { "refId": "A", "expr": "cienergy_carbon_operational_gco2eq{service_namespace=~\".+\"}", "legendFormat": "operational · {{service_namespace}}", "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } },
+        { "refId": "B", "expr": "cienergy_carbon_embodied_gco2eq{service_namespace=~\".+\"}",    "legendFormat": "embodied · {{service_namespace}}",    "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Grid intensity (gCO₂eq / kWh)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "axisLabel": "g/kWh" } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull"] } },
+      "targets": [{ "refId": "A",
+        "expr": "cienergy_grid_intensity_gco2eq_per_kwh{sustainability_grid_zone=~\".+\"}",
+        "legendFormat": "{{sustainability_grid_zone}}",
+        "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+    {
+      "type": "barchart",
+      "title": "SCI per repository (latest)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "hidden" } },
+      "targets": [{ "refId": "A",
+        "expr": "topk(20, max by (service_namespace) (cienergy_sci_value))",
+        "legendFormat": "{{service_namespace}}",
+        "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    },
+
+    {
+      "type": "table",
+      "title": "Last-seen OTLP metrics",
+      "description": "All cienergy.* gauges currently in Prometheus, with their resource labels (service_namespace = repository, sustainability_grid_zone = region, ci_workflow, host_arch, …).",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "cienergy-otlp" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 4 } },
+      "options": { "showHeader": true },
+      "targets": [{ "refId": "A",
+        "expr": "{__name__=~\"cienergy_.*\"}",
+        "format": "table",
+        "instant": true,
+        "datasource": { "type": "prometheus", "uid": "cienergy-otlp" } }]
+    }
+  ]
+}
+

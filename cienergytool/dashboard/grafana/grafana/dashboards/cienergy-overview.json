@@ -37,65 +37,42 @@
   "panels": [
     {
       "type": "stat",
-      "title": "Total energy  ·  × $runs_per_day × $days_per_year",
-      "description": "Mean energy per run over the window × (X × Y). Reflects the What-if scenario controls at the top of the dashboard.",
+      "title": "Total energy",
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 2 } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT COALESCE(AVG(energy_kwh), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) AS projected_kwh FROM runs WHERE $__timeFilter(started_at);",
-        "format": "table" }]
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(energy_kwh) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
     },
     {
       "type": "stat",
-      "title": "Total carbon  ·  zone=$zone × $runs_per_day × $days_per_year",
-      "description": "Mean per-run carbon (operational re-computed against the selected zone when not 'Measured', + embodied) × (X × Y). Auto-scaled to g / kg / t / kt / Mt.",
+      "title": "Total carbon",
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
-      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ {"color": "green", "value": null }, {"color": "orange", "value": 100000}, {"color": "red", "value": 1000000} ] } } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT COALESCE(AVG(CASE WHEN ${zone:raw}::float > 0 THEN energy_kwh * ${zone:raw}::float ELSE operational_gco2eq END) + AVG(embodied_gco2eq), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) AS projected_gco2eq FROM runs WHERE $__timeFilter(started_at);",
-        "format": "table" }]
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(total_gco2eq) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
     },
     {
       "type": "stat",
-      "title": "Mean SCI  ·  zone=$zone",
-      "description": "Mean SCI per run, with operational re-projected against the selected hosting zone when set. Not multiplied by X×Y (SCI is per functional unit, ISO/IEC 21031:2024).",
+      "title": "Mean SCI",
+      "description": "Mean SCI per run over the time window.",
       "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT COALESCE(AVG(CASE WHEN ${zone:raw}::float > 0 THEN energy_kwh * ${zone:raw}::float ELSE operational_gco2eq END) + AVG(embodied_gco2eq), 0) AS scenario_sci FROM runs WHERE $__timeFilter(started_at);",
-        "format": "table" }]
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A", "rawSql": "SELECT AVG(sci_value) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
     },
     {
       "type": "stat",
-      "title": "Cache savings  ·  × $runs_per_day × $days_per_year",
-      "description": "Mean saved gCO₂eq per run × (X × Y). Goes up as cache-hit runs become more frequent under the scenario.",
+      "title": "Cache savings",
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "green" } } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT COALESCE(AVG(saved_gco2eq), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) AS projected_savings FROM runs WHERE $__timeFilter(started_at);",
-        "format": "table" }]
-    },
-
-    {
-      "type": "stat",
-      "title": "GPU energy (Σ run_steps.gpu_kwh)",
-      "description": "Total GPU contribution captured by cienergy-gpu-probe. 0 when no NVIDIA GPU was probed.",
-      "gridPos": { "x": 0, "y": 4, "w": 6, "h": 4 },
-      "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 4, "color": { "mode": "fixed", "fixedColor": "purple" } } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT COALESCE(SUM(s.gpu_kwh), 0) FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE $__timeFilter(r.started_at);",
-        "format": "table" }]
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(saved_gco2eq) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
     },
 
     {
       "type": "timeseries",
       "title": "SCI trend",
-      "gridPos": { "x": 6, "y": 4, "w": 9, "h": 8 },
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
       "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
       "targets": [{ "refId": "A",
         "rawSql": "SELECT started_at AS time, repository, sci_value FROM runs WHERE $__timeFilter(started_at) ORDER BY 1;",
@@ -104,7 +81,7 @@
     {
       "type": "barchart",
       "title": "Repository leaderboard",
-      "gridPos": { "x": 15, "y": 4, "w": 9, "h": 8 },
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
       "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
       "options": { "orientation": "horizontal", "legend": { "displayMode": "hidden" } },
       "targets": [{ "refId": "A",
@@ -113,28 +90,16 @@
     },
 
     {
-      "type": "barchart",
-      "title": "CSRD / ESRS E1 — Scope 2 vs Scope 3.1 by repository",
-      "description": "GHG Protocol scopes: operational = Scope 2 (location-based), embodied = Scope 3.1 (amortised hardware). Mirrors what cienergy-csrd-export --by repository produces.",
-      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 4 },
-      "options": { "stacking": "normal", "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
-      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2 } },
-      "targets": [{ "refId": "A",
-        "rawSql": "SELECT repository, SUM(CASE WHEN ${zone:raw}::float > 0 THEN energy_kwh * ${zone:raw}::float ELSE operational_gco2eq END) AS scope2, SUM(embodied_gco2eq) AS scope3_1 FROM runs WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 2 DESC LIMIT 20;",
-        "format": "table" }]
-    },
-
-    {
       "type": "row",
-      "title": "What-if scenario summary  ·  zone=$zone · X=$runs_per_day runs/day · Y=$days_per_year days/yr",
+      "title": "What-if scenario  ·  zone=$zone · X=$runs_per_day runs/day · Y=$days_per_year days/yr",
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "stat",
       "title": "Projected runs / year",
-      "description": "X × Y. Drives the scenario-aware KPIs at the top of the dashboard.",
-      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 4 },
+      "description": "X × Y. Drives the projected-annual stats and the breakdown panel below.",
+      "gridPos": { "x": 0, "y": 13, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "green" } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "targets": [{ "refId": "A",
@@ -143,11 +108,33 @@
     },
     {
       "type": "stat",
+      "title": "Projected energy / year",
+      "description": "Mean energy per run over the time window × (X × Y).",
+      "gridPos": { "x": 6, "y": 13, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "kwatth", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT COALESCE(AVG(energy_kwh), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) AS projected_kwh FROM runs WHERE $__timeFilter(started_at);",
+        "format": "table" }]
+    },
+    {
+      "type": "stat",
+      "title": "Projected carbon / year",
+      "description": "Mean per-run carbon (with optional zone override) × (X × Y). Auto-scaled to g / kg / t.",
+      "gridPos": { "x": 12, "y": 13, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "massg", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ {"color": "green", "value": null }, {"color": "orange", "value": 100000}, {"color": "red", "value": 1000000} ] } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT COALESCE(AVG(CASE WHEN ${zone:raw}::float > 0 THEN energy_kwh * ${zone:raw}::float ELSE operational_gco2eq END) + AVG(embodied_gco2eq), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) AS projected_gco2eq FROM runs WHERE $__timeFilter(started_at);",
+        "format": "table" }]
+    },
+    {
+      "type": "stat",
       "title": "Equivalent (avg petrol car · 170 g/km)",
-      "description": "Annual projected carbon ÷ 170 gCO₂eq/km. Same input as the 'Total carbon' KPI above.",
-      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 4 },
+      "description": "Annual projected carbon ÷ 170 gCO₂eq/km.",
+      "gridPos": { "x": 18, "y": 13, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "lengthkm", "decimals": 1 } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
       "targets": [{ "refId": "A",
         "rawSql": "SELECT COALESCE(AVG(CASE WHEN ${zone:raw}::float > 0 THEN energy_kwh * ${zone:raw}::float ELSE operational_gco2eq END) + AVG(embodied_gco2eq), 0) * (${runs_per_day:raw}::float * ${days_per_year:raw}::float) / 170.0 AS km FROM runs WHERE $__timeFilter(started_at);",
         "format": "table" }]

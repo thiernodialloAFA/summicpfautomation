@@ -1,0 +1,13 @@
+apiVersion: 1
+datasources:
+  - name: cienergy-otlp
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+      exemplarTraceIdDestinations: []
+
