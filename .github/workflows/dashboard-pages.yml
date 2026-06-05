@@ -66,7 +66,7 @@ concurrency:
 env:
   # Resolution order: workflow_dispatch input → repo var → hard-coded default.
   REGION:         ${{ inputs.region        || vars.REGION        || 'FR' }}
-  REPOS:          ${{ inputs.repos         || vars.REPOS         || 'myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications' }}
+  REPOS:          ${{ inputs.repos         || vars.REPOS         || 'https://github.com/ultralytics/ultralytics.git,https://github.com/vllm-project/vllm.git,https://github.com/bentoml/BentoML.git,https://github.com/langchain-ai/langgraph.git,https://github.com/iterative/dvc.git,myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications' }}
   REPO_REMOTES:   ${{ inputs.repo_remotes  || vars.REPO_REMOTES  || '' }}
   CSRD_BY:        ${{ vars.CSRD_BY         || 'repository' }}
   CLONE_DEPTH:    ${{ vars.CLONE_DEPTH     || '1' }}
