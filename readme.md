@@ -1,0 +1,3 @@
+[![ci](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml)
+[![dashboard-pages](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/dashboard-pages.yml/badge.svg)](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/dashboard-pages.yml)
+[![docs](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/docs.yml/badge.svg)](https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/docs.yml)

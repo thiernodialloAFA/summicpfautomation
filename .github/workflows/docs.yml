@@ -40,7 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          # No `cache: pip` here on purpose — we don't ship a requirements.txt
+          # nor a pyproject.toml, so setup-python's cache lookup would fail
+          # with: "No file matched to [**/requirements.txt or **/pyproject.toml]".
+          # The two packages below install in <5 s; not worth caching.
       # Pin to the last known-good MkDocs 1.x line. mkdocs-material is locked
       # to the 9.5.x line because 9.6+ requires MkDocs >= 1.6 and Python 3.11
       # quirks, and 10.x will track MkDocs 2.0 (breaking — see MOTD above).
