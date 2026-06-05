@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml"><img src="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml/badge.svg?branch=main" alt="ci"></a>
+  <a href="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml"><img src="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/dashboard-pages.yml"><img src="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/dashboard-pages.yml/badge.svg" alt="dashboard-pages"></a>
   <a href="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/docs.yml"><img src="https://github.com/thiernodialloAFA/summicpfautomation/actions/workflows/docs.yml/badge.svg" alt="docs"></a>
   <a href="cienergytool/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
