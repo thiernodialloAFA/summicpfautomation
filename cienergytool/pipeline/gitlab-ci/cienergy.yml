@@ -1,0 +1,125 @@
+# cienergy - reusable GitLab CI snippet.
+#
+# Usage in a consumer .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'axa-oss/cienergytool'
+#       ref: 'v1.0.0'
+#       file: '/pipeline/gitlab-ci/cienergy.yml'
+#
+#   build:
+#     extends: .cienergy
+#     image: ubuntu:22.04
+#     script:
+#       - ./build.sh
+#       - ./test.sh
+#     variables:
+#       CIENERGY_REGION: 'WE'
+#       CIENERGY_TEAM:   'claims-platform'
+#       CIENERGY_COST_CENTER: 'AXA-FR-IT-042'
+#
+# The job's energy report + the embedded dashboard are uploaded as a GitLab
+# pipeline artifact (kept 30 days by default). If CIENERGY_INGESTER_URL is
+# set, the report is also POSTed to the ingester (best-effort, 3 retries).
+
+.cienergy:
+  variables:
+    CIENERGY_REGION: 'WORLD'
+    CIENERGY_CPU_MODEL: 'Intel Xeon Platinum 8370C'
+    CIENERGY_CPU_TDP_W: '270'
+    CIENERGY_TEAM: ''
+    CIENERGY_COST_CENTER: ''
+    CIENERGY_INGESTER_URL: ''
+    CIENERGY_AGGREGATOR_URL: 'https://github.com/axa-oss/cienergytool/releases/latest/download/cienergy-aggregator-linux-x86_64'
+
+  before_script:
+    - !reference [.cienergy_install]
+    - !reference [.cienergy_start]
+
+  after_script:
+    - !reference [.cienergy_aggregate]
+    - !reference [.cienergy_push]
+
+  artifacts:
+    name: 'cienergy-${CI_PIPELINE_ID}-${CI_JOB_ID}'
+    when: always
+    expire_in: 30 days
+    paths:
+      - .cienergy/energy-report.json
+      - .cienergy/dashboard/
+
+# -----------------------------------------------------------------------------
+# Reusable shell fragments (via YAML anchors / !reference)
+# -----------------------------------------------------------------------------
+.cienergy_install: &cienergy_install
+  - |
+    set -euo pipefail
+    mkdir -p "$CI_PROJECT_DIR/.cienergy"
+    cd "$CI_PROJECT_DIR/.cienergy"
+    if [ ! -x ./cienergy-aggregator ]; then
+      curl -fsSL -o ./cienergy-aggregator "${CIENERGY_AGGREGATOR_URL}"
+      chmod +x ./cienergy-aggregator
+    fi
+
+.cienergy_start: &cienergy_start
+  - |
+    set -euo pipefail
+    export CIENERGY_START=$(date -u +%FT%TZ)
+    echo "$CIENERGY_START" > "$CI_PROJECT_DIR/.cienergy/start"
+    nohup bash -c '
+      while true; do
+        if command -v top >/dev/null; then
+          U=$(top -bn1 2>/dev/null | awk "/Cpu/ {print 100 - \$8; exit}")
+        else
+          U=50
+        fi
+        echo "{\"t\":\"$(date -u +%FT%TZ)\",\"util\":${U:-50}}" >> "'"$CI_PROJECT_DIR/.cienergy/util.jsonl"'"
+        sleep 2
+      done
+    ' >/dev/null 2>&1 &
+    echo $! > "$CI_PROJECT_DIR/.cienergy/sampler.pid"
+
+.cienergy_aggregate: &cienergy_aggregate
+  - |
+    set -euo pipefail
+    WORK="$CI_PROJECT_DIR/.cienergy"
+    kill "$(cat "$WORK/sampler.pid" 2>/dev/null)" 2>/dev/null || true
+    START="$(cat "$WORK/start")"
+    AVG_UTIL=$(awk -F'"util":' 'NF>1 {gsub(/[},]/,"",$2); s+=$2; n++} END{if(n>0) print s/n; else print 50}' "$WORK/util.jsonl" 2>/dev/null || echo 50)
+    DURATION=$(( $(date -u +%s) - $(date -u -d "$START" +%s 2>/dev/null || gdate -u -d "$START" +%s) ))
+    STEPS="$WORK/steps.jsonl"
+    printf '{"name":"job","durationSeconds":%d,"cpuUtilPct":%.1f}\n' "$DURATION" "$AVG_UTIL" > "$STEPS"
+    CIENERGY_TEAM="$CIENERGY_TEAM" \
+    CIENERGY_COST_CENTER="$CIENERGY_COST_CENTER" \
+    "$WORK/cienergy-aggregator" \
+      --start "$START" --end "$(date -u +%FT%TZ)" \
+      --platform gitlab-ci \
+      --repo "$CI_PROJECT_PATH" \
+      --workflow "${CI_PIPELINE_NAME:-$CI_JOB_NAME}" \
+      --ref "$CI_COMMIT_REF_NAME" \
+      --commit "$CI_COMMIT_SHA" \
+      --run-id "$CI_PIPELINE_ID" \
+      --os "Linux" --arch "x86_64" \
+      --cpu-model "$CIENERGY_CPU_MODEL" \
+      --tdp "$CIENERGY_CPU_TDP_W" \
+      --region "$CIENERGY_REGION" \
+      --steps-file "$STEPS" \
+      --out "$WORK/energy-report.json"
+
+.cienergy_push: &cienergy_push
+  - |
+    set -euo pipefail
+    URL="${CIENERGY_INGESTER_URL:-}"
+    [ -z "$URL" ] && exit 0
+    AUTH=()
+    [ -n "${CIENERGY_INGESTER_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $CIENERGY_INGESTER_TOKEN")
+    for i in 1 2 3; do
+      if curl -fsS -X POST "${URL%/}/v1/runs" \
+           -H 'Content-Type: application/json' "${AUTH[@]}" \
+           --data @"$CI_PROJECT_DIR/.cienergy/energy-report.json" -o /tmp/cienergy-resp.json; then
+        echo "cienergy: pushed to $URL (attempt $i)"; exit 0
+      fi
+      echo "cienergy: ingester push failed (attempt $i)"; sleep $((i*i))
+    done
+    echo "cienergy: gave up after 3 attempts"
+

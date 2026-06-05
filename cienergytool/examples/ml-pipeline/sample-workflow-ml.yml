@@ -1,0 +1,88 @@
+# ML pipeline integration example for cienergy.
+#
+# This workflow demonstrates how to combine the standard cienergy-action
+# (CPU energy via the eco-ci model + grid intensity + Boavizta embodied)
+# with the GPU/CodeCarbon extensions for an end-to-end ML training run.
+#
+# Place this file at .github/workflows/train.yml in an ML repo.
+
+name: train
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *'    # nightly
+
+jobs:
+  train:
+    runs-on: [self-hosted, linux, gpu-a100]   # any runner with NVIDIA driver + nvidia-smi
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) cienergy wrapper — sets up the work dir, sampler and aggregator.
+      - name: cienergy
+        uses: axa-oss/cienergy-action@v1
+        with:
+          region: FR
+          team: risk-ml
+          cost-center: AXA-FR-DS-019
+          electricity-maps-token: ${{ secrets.EMAPS_TOKEN }}
+          ingester-url:   https://cienergy.example.com
+          ingester-token: ${{ secrets.CIENERGY_TOKEN }}
+
+      # 2) Install Python and the CodeCarbon bridge.
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          python -m pip install --upgrade pip
+          pip install 'codecarbon>=2.4' xgboost pandas pyarrow
+
+      # 3) Start the GPU probe in background; it writes one JSONL row on TERM.
+      - name: start gpu-probe
+        run: |
+          set -euo pipefail
+          # The action exports $RUNNER_TEMP/cienergy as $WORK; the steps.jsonl
+          # file is the one the aggregator will read at the end.
+          mkdir -p "$RUNNER_TEMP/cienergy"
+          nohup cienergy-gpu-probe \
+              --name train-xgboost-gpu \
+              --steps-file "$RUNNER_TEMP/cienergy/steps.jsonl" \
+              --interval-ms 2000 \
+              >/tmp/gpu-probe.log 2>&1 &
+          echo $! > /tmp/gpu-probe.pid
+
+      # 4) The actual training step. CodeCarbon writes its own steps row.
+      - name: train
+        env:
+          CIENERGY_STEPS: ${{ runner.temp }}/cienergy/steps.jsonl
+        run: |
+          python - <<'PY'
+          import os
+          from bridges.codecarbon.cienergy_codecarbon import measure
+          steps = os.environ["CIENERGY_STEPS"]
+          with measure(name="ingest-features", steps_file=steps, country_iso_code="FRA"):
+              import pandas as pd
+              df = pd.read_parquet("s3://bucket/features.parquet")
+          with measure(name="train-xgboost", steps_file=steps, country_iso_code="FRA"):
+              import xgboost as xgb
+              model = xgb.train({"tree_method": "hist", "device": "cuda"}, xgb.DMatrix(df), 100)
+          with measure(name="evaluate", steps_file=steps, country_iso_code="FRA"):
+              from sklearn.metrics import roc_auc_score
+              # ... evaluation
+              pass
+          PY
+
+      # 5) Stop the GPU probe gracefully — it appends one final row.
+      - name: stop gpu-probe
+        if: always()
+        run: |
+          if [ -f /tmp/gpu-probe.pid ]; then
+            kill -TERM "$(cat /tmp/gpu-probe.pid)" 2>/dev/null || true
+            wait $(cat /tmp/gpu-probe.pid) 2>/dev/null || true
+          fi
+          cat /tmp/gpu-probe.log || true
+
+      # The action's post-job step then runs the aggregator over the merged
+      # steps.jsonl (CPU + GPU + CodeCarbon rows) and pushes the SCI report
+      # to the configured ingester.
+

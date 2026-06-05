@@ -1,0 +1,68 @@
+site_name: cienergy
+site_description: SCI-compliant CI/CD energy and carbon measurement
+site_url: https://axa-oss.github.io/cienergytool
+repo_url: https://github.com/axa-oss/cienergytool
+repo_name: axa-oss/cienergytool
+copyright: Copyright © 2026 AXA — Apache-2.0
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: green
+      accent: indigo
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: green
+      accent: indigo
+      toggle: { icon: material/brightness-4, name: Switch to light mode }
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed: { alternate_style: true }
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Methodology: methodology.md
+  - Schema (v1): schema/v1.json
+  - CI/CD integrations:
+      - GitHub Actions:  ../action/action.yml
+      - Azure DevOps:    ../pipeline/azure-devops/README.md
+      - GitLab CI:       ../pipeline/gitlab-ci/README.md
+      - Jenkins:         ../pipeline/jenkins/README.md
+  - Dashboards:
+      - Embedded (HTML/JS/CSS): ../dashboard/embedded/README.md
+      - Grafana stack:           ../dashboard/grafana/README.md
+  - Ingester API:
+      - REST endpoints: ../cmd/ingester/README.md
+      - OpenAPI spec:    api/openapi.yaml
+  - AI/ML extensions:
+      - CodeCarbon bridge: ../bridges/codecarbon/README.md
+  - CSRD / ESRS E1: csrd-mapping.md
+  - ADRs:
+      - 0001 — Source priority:    adr/0001-source-priority.md
+      - 0002 — Schema versioning:  adr/0002-schema-versioning.md
+  - Project plan: ../PLAN.md
+

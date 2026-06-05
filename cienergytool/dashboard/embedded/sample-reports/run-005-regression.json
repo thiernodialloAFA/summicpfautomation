@@ -1,0 +1,46 @@
+{
+  "$schema": "https://axa-oss.github.io/cienergy/schema/v1.json",
+  "specVersion": "1.0.0",
+  "sciSpecVersion": "ISO/IEC 21031:2024",
+  "run": {
+    "id": "gha-7010",
+    "platform": "github-actions",
+    "repository": "axa/claims-api",
+    "workflow": "ci.yml",
+    "ref": "refs/pull/177/merge",
+    "commitSha": "e5f60718293a4b5c6d7e8f9012345678a1b2c3d4",
+    "startedAt": "2026-06-04T05:30:00Z",
+    "endedAt":   "2026-06-04T05:46:42Z",
+    "durationSeconds": 1002
+  },
+  "runner": {
+    "os": "linux", "arch": "x86_64", "vcpu": 4, "ramGiB": 16,
+    "cpuModel": "Intel Xeon Platinum 8370C", "tdpWatts": 270,
+    "provider": "github-hosted", "region": "US-VA"
+  },
+  "energy": {
+    "totalKWh": 0.058710,
+    "byStep": [
+      { "name": "checkout",     "kWh": 0.000034, "durationSeconds": 3,   "source": "eco-ci-model", "cpuUtilPct": 15 },
+      { "name": "setup-jdk",    "kWh": 0.000315, "durationSeconds": 12,  "source": "eco-ci-model", "cpuUtilPct": 35 },
+      { "name": "build",        "kWh": 0.040950, "durationSeconds": 700, "source": "eco-ci-model", "cpuUtilPct": 78 },
+      { "name": "test",         "kWh": 0.015301, "durationSeconds": 245, "source": "eco-ci-model", "cpuUtilPct": 83 },
+      { "name": "docker-build", "kWh": 0.002110, "durationSeconds": 42,  "source": "eco-ci-model", "cpuUtilPct": 67 }
+    ]
+  },
+  "carbon": {
+    "operationalGCO2eq": 22.956,
+    "embodiedGCO2eq": 2.337,
+    "totalGCO2eq": 25.293,
+    "gridIntensity": {
+      "valueGCO2eqPerKWh": 391, "source": "electricitymaps",
+      "zone": "US-VA", "timestamp": "2026-06-04T05:30:00Z"
+    },
+    "embodiedSource": "boavizta"
+  },
+  "sci": { "value": 25.293, "unit": "gCO2eq", "functionalUnit": "1 pipeline run", "R": 1 },
+  "cache": { "hit": false },
+  "metadata": { "team": "claims-platform", "costCenter": "AXA-FR-IT-042",
+    "labels": { "language": "java", "framework": "spring-boot", "regression": "cold-cache+full-test-matrix" } }
+}
+

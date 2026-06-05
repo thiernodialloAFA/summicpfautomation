@@ -1,0 +1,8 @@
+bin/
+*.log
+*.out
+.DS_Store
+/tmp/
+dashboard/embedded/vendor/
+dashboard/embedded/sample-reports/run-local.json
+

@@ -1,0 +1,26 @@
+# cienergy per-repo configuration. Place at the repository root.
+# All fields are optional; defaults shown.
+
+functionalUnit: "1 pipeline run"
+R: 1
+
+# Override grid zone if the runner location is known and different from the cloud region.
+region: US-VA
+
+# Hardware overrides (used by the eco-ci model when RAPL is unavailable).
+runner:
+  cpuModel: "Intel Xeon Platinum 8370C"
+  tdpWatts: 270
+
+# Threshold gates for the PR comment bot.
+gates:
+  failOnSciIncreasePct: 25      # fail the PR if SCI grows by more than 25% vs. base branch
+  warnOnSciIncreasePct: 10
+
+metadata:
+  team: claims-platform
+  costCenter: AXA-FR-IT-042
+  labels:
+    language: java
+    framework: spring-boot
+

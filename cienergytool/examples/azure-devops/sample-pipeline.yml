@@ -1,0 +1,49 @@
+# Sample Azure DevOps pipeline using the cienergy step-list wrapper template.
+#
+# The cienergy template takes your build/test steps as a `steps:` parameter
+# and inserts pre/post measurement steps around them.
+
+trigger:
+  branches: { include: [ main ] }
+pr:
+  branches: { include: [ main ] }
+
+resources:
+  repositories:
+    - repository: cienergy
+      type: github
+      endpoint: 'github.com'             # ADO -> GitHub service connection name
+      name: axa-oss/cienergytool
+      ref: refs/tags/v1.0.0
+
+variables:
+  - group: cienergy-secrets              # must contain EMAPS_TOKEN (optional)
+
+stages:
+  - stage: build
+    jobs:
+      - job: build
+        pool: { vmImage: 'ubuntu-22.04' }
+        steps:
+          - template: pipeline/azure-devops/cienergy-step-template.yml@cienergy
+            parameters:
+              region: 'WE'                # West Europe agent
+              team: 'claims-platform'
+              costCenter: 'AXA-FR-IT-042'
+              electricityMapsTokenVar: 'EMAPS_TOKEN'
+              steps:
+                - checkout: self
+
+                - task: UseDotNet@2
+                  inputs:
+                    version: '8.x'
+
+                - script: |
+                    set -euo pipefail
+                    dotnet build --configuration Release
+                  displayName: 'Build'
+
+                - script: |
+                    set -euo pipefail
+                    dotnet test --configuration Release --no-build
+                  displayName: 'Test'

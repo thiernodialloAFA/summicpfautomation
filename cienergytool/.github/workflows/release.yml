@@ -1,0 +1,168 @@
+# Builds cienergy binaries for all supported (OS, arch), signs them with
+# cosign (keyless, OIDC-based), and attaches SLSA Level 3 provenance to the
+# GitHub Release.
+#
+# Triggered by pushing a tag matching v*.*.*.
+#
+# Required permissions are scoped per-job (least privilege).
+# See: https://docs.github.com/en/actions/security-guides/automatic-token-authentication
+#      https://docs.sigstore.dev/cosign/openid_signing/
+#      https://slsa.dev/spec/v1.0/levels
+
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Build cross-platform binaries reproducibly.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: '.exe' }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22', check-latest: true }
+
+      - name: Build (reproducible)
+        env:
+          GOOS:        ${{ matrix.goos }}
+          GOARCH:      ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          mkdir -p dist
+          for cmd in aggregator ingester gpu-probe gate csrd-export; do
+            out="dist/cienergy-${cmd}-${GOOS}-${GOARCH}${{ matrix.ext }}"
+            go build -trimpath \
+              -buildvcs=false \
+              -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "$out" "./cmd/${cmd}"
+          done
+          (cd dist && sha256sum * > checksums.txt)
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cienergy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 2) Generate SLSA Level 3 provenance for every artifact via the official
+  #    reusable workflow. This produces a sigstore-signed in-toto attestation.
+  # ---------------------------------------------------------------------------
+  provenance:
+    name: SLSA provenance
+    needs: [build]
+    permissions:
+      id-token: write    # cosign OIDC
+      contents: write    # write release notes
+      actions: read      # for build context
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}
+      provenance-name: cienergy.intoto.jsonl
+      upload-assets: true
+
+  # ---------------------------------------------------------------------------
+  # 3) Sign each binary with cosign (keyless OIDC) and publish the GitHub Release.
+  # ---------------------------------------------------------------------------
+  release:
+    name: sign & release
+    needs: [build, provenance]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write    # create release + upload assets
+      id-token: write    # OIDC token used by cosign
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-merged
+
+      - name: Flatten
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          find dist-merged -type f -exec cp -t dist {} +
+          (cd dist && sha256sum cienergy-* > checksums.txt)
+          ls -la dist
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with: { cosign-release: 'v2.4.0' }
+
+      - name: Sign binaries with cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          set -euxo pipefail
+          for f in dist/cienergy-*; do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "${f}"
+          done
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          files: |
+            dist/cienergy-*
+            dist/checksums.txt
+          generate_release_notes: true
+          body: |
+            ## Supply-chain assurance
+
+            All binaries are:
+            - **Signed** with [cosign](https://www.sigstore.dev/) (keyless OIDC; identity = this workflow run).
+            - Accompanied by [**SLSA Level 3**](https://slsa.dev/spec/v1.0/levels) provenance (`cienergy.intoto.jsonl`).
+            - Reproducible (`-trimpath -buildvcs=false`, `SOURCE_DATE_EPOCH=0`).
+
+            ### Verify
+
+            ```sh
+            cosign verify-blob \
+              --certificate cienergy-aggregator-linux-amd64.pem \
+              --signature   cienergy-aggregator-linux-amd64.sig \
+              --certificate-identity-regexp 'https://github.com/axa-oss/cienergytool/.github/workflows/release.yml@.*' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              cienergy-aggregator-linux-amd64
+
+            slsa-verifier verify-artifact \
+              --provenance-path cienergy.intoto.jsonl \
+              --source-uri      github.com/axa-oss/cienergytool \
+              cienergy-aggregator-linux-amd64
+            ```
+

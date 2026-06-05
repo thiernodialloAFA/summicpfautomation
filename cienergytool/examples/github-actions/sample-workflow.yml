@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Wrap the rest of the job: measure energy & emit a SCI report.
+      - name: cienergy
+        uses: axa-oss/cienergy-action@v1   # or ./action when running in-repo
+        with:
+          electricity-maps-token: ${{ secrets.EMAPS_TOKEN }}
+          region: US-VA
+          team: claims-platform
+          cost-center: AXA-FR-IT-042
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+

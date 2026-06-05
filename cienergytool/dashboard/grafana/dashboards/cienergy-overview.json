@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 39,
+  "title": "cienergy — overview",
+  "uid": "cienergy-overview",
+  "tags": ["cienergy", "sustainability", "ci"],
+  "timezone": "browser",
+  "time": { "from": "now-30d", "to": "now" },
+  "refresh": "5m",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total energy (kWh)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(energy_kwh) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }],
+      "fieldConfig": { "defaults": { "decimals": 3, "unit": "kwatth" } }
+    },
+    {
+      "type": "stat",
+      "title": "Total carbon (gCO₂eq)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(total_gco2eq) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
+    },
+    {
+      "type": "stat",
+      "title": "Mean SCI (gCO₂eq / run)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "refId": "A", "rawSql": "SELECT AVG(sci_value) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
+    },
+    {
+      "type": "stat",
+      "title": "Cache savings (gCO₂eq avoided)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "refId": "A", "rawSql": "SELECT SUM(saved_gco2eq) FROM runs WHERE $__timeFilter(started_at);", "format": "table" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "SCI trend",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT started_at AS time, repository, sci_value FROM runs WHERE $__timeFilter(started_at) ORDER BY 1;",
+        "format": "time_series" }]
+    },
+    {
+      "type": "barchart",
+      "title": "Repository leaderboard (gCO₂eq)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT repository, SUM(total_gco2eq) AS total FROM runs WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY total DESC LIMIT 10;",
+        "format": "table" }]
+    },
+    {
+      "type": "piechart",
+      "title": "Runner arch mix (kWh)",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT arch, SUM(energy_kwh) AS kwh FROM runs WHERE $__timeFilter(started_at) GROUP BY 1;",
+        "format": "table" }]
+    },
+    {
+      "type": "table",
+      "title": "Recent runs",
+      "gridPos": { "x": 8, "y": 12, "w": 16, "h": 8 },
+      "targets": [{ "refId": "A",
+        "rawSql": "SELECT started_at, repository, workflow, arch, grid_zone, ROUND(grid_intensity::numeric,0) AS i, ROUND(energy_kwh::numeric,4) AS kwh, ROUND(total_gco2eq::numeric,2) AS co2, ROUND(sci_value::numeric,2) AS sci FROM runs WHERE $__timeFilter(started_at) ORDER BY started_at DESC LIMIT 50;",
+        "format": "table" }]
+    }
+  ]
+}
+

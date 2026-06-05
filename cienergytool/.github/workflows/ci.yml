@@ -1,0 +1,51 @@
+# CI workflow that dogfoods cienergy on itself: every PR / push runs
+# `go test`, then measures and uploads its own SCI energy-report.json
+# (Mode B embedded dashboard) as a build artifact.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+
+      # Dogfood: wrap the rest of the job with cienergy. The action is the
+      # one defined in this same repo, so we reference it by local path.
+      - uses: ./action
+        with:
+          region: US-VA
+          team:   cienergy-maintainers
+          cost-center: A-OSS
+
+      - name: Build
+        run: |
+          go mod tidy
+          make build
+
+      - name: Test
+        run: go test ./...
+
+      - name: Validate samples & smoke checks
+        run: |
+          python3 test/validate_samples.py
+          python3 test/csrd_export_smoke.py
+
+      - name: Lint OpenAPI
+        uses: stoplightio/spectral-action@v0.8.13
+        with:
+          file_glob: 'docs/api/openapi.yaml'
+        continue-on-error: true
+

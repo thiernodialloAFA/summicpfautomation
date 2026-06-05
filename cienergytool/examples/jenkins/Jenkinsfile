@@ -1,0 +1,32 @@
+@Library('cienergy') _
+
+pipeline {
+    agent { label 'linux' }
+
+    stages {
+        stage('Build & test (instrumented)') {
+            steps {
+                cienergyMeasure(
+                    region:            'WE',
+                    team:              'claims-platform',
+                    costCenter:        'AXA-FR-IT-042',
+                    ingesterUrl:       'https://cienergy.example.com',
+                    ingesterTokenCred: 'cienergy-token',          // Jenkins SecretText credential id
+                    electricityMapsTokenCred: 'emaps-token'       // optional
+                ) {
+                    sh './build.sh'
+                    sh './test.sh'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // The cienergyMeasure step already archives .cienergy/energy-report.json.
+            // Optionally publish the embedded dashboard here as well.
+            echo 'cienergy report archived as build artifact'
+        }
+    }
+}
+

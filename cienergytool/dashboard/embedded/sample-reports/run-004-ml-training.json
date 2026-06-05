@@ -1,0 +1,47 @@
+{
+  "$schema": "https://axa-oss.github.io/cienergy/schema/v1.json",
+  "specVersion": "1.0.0",
+  "sciSpecVersion": "ISO/IEC 21031:2024",
+  "run": {
+    "id": "gha-9001",
+    "platform": "github-actions",
+    "repository": "axa/risk-models",
+    "workflow": "train-xgboost.yml",
+    "ref": "refs/heads/main",
+    "commitSha": "d4e5f60718293a4b5c6d7e8f9012345678a1b2c3",
+    "startedAt": "2026-06-03T22:00:00Z",
+    "endedAt":   "2026-06-04T00:35:00Z",
+    "durationSeconds": 9300
+  },
+  "runner": {
+    "os": "linux", "arch": "x86_64", "vcpu": 16, "ramGiB": 64,
+    "cpuModel": "AMD EPYC 7763 + NVIDIA A100 80GB",
+    "tdpWatts": 280,
+    "provider": "github-self-hosted", "region": "FR"
+  },
+  "energy": {
+    "totalKWh": 1.842000,
+    "byStep": [
+      { "name": "checkout",            "kWh": 0.000060, "durationSeconds": 4,    "source": "rapl",     "cpuUtilPct": 15 },
+      { "name": "fetch-features",      "kWh": 0.018500, "durationSeconds": 320,  "source": "rapl",     "cpuUtilPct": 45 },
+      { "name": "ingest-incremental",  "kWh": 0.041000, "durationSeconds": 480,  "source": "rapl",     "cpuUtilPct": 70 },
+      { "name": "train-xgboost-gpu",   "kWh": 1.620000, "durationSeconds": 7200, "source": "nvml",     "cpuUtilPct": 40, "gpuKWh": 1.540 },
+      { "name": "evaluate",            "kWh": 0.118000, "durationSeconds": 1200, "source": "rapl",     "cpuUtilPct": 62 },
+      { "name": "register-model",      "kWh": 0.044440, "durationSeconds": 96,   "source": "eco-ci-model", "cpuUtilPct": 30 }
+    ]
+  },
+  "carbon": {
+    "operationalGCO2eq": 103.152,
+    "embodiedGCO2eq": 21.700,
+    "totalGCO2eq": 124.852,
+    "gridIntensity": {
+      "valueGCO2eqPerKWh": 56, "source": "electricitymaps",
+      "zone": "FR", "timestamp": "2026-06-03T22:00:00Z"
+    },
+    "embodiedSource": "boavizta"
+  },
+  "sci": { "value": 124.852, "unit": "gCO2eq", "functionalUnit": "1 model training run", "R": 1 },
+  "metadata": { "team": "risk-ml", "costCenter": "AXA-FR-DS-019",
+    "labels": { "language": "python", "framework": "xgboost", "workload": "ml-training", "gpu": "a100-80gb" } }
+}
+

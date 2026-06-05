@@ -1,0 +1,10 @@
+# Each line = one step sample. Schema:
+#   { "name": <string>, "durationSeconds": <number>, "cpuUtilPct": <number 0-100>,
+#     "kWh": <number, optional — overrides model>, "source": <enum, optional>,
+#     "gpuKWh": <number, optional> }
+{"name":"checkout","durationSeconds":3,"cpuUtilPct":15}
+{"name":"setup-jdk","durationSeconds":12,"cpuUtilPct":35}
+{"name":"build","durationSeconds":210,"cpuUtilPct":78}
+{"name":"test","durationSeconds":165,"cpuUtilPct":62}
+{"name":"docker-build","durationSeconds":16,"cpuUtilPct":55}
+

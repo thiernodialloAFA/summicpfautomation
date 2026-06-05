@@ -1,0 +1,183 @@
+# cienergy - reusable Azure DevOps steps template (wrapper pattern)
+#
+# This template WRAPS your build/test/deploy steps with energy & carbon
+# measurement and publishes a SCI-compliant `energy-report.json` artifact
+# (plus the embedded HTML dashboard) at the end of the job.
+#
+# Usage in a consumer pipeline: see examples/azure-devops/sample-pipeline.yml.
+
+parameters:
+  - name: steps                          # the consumer's actual job steps
+    type: stepList
+    default: []
+  - name: region
+    type: string
+    default: 'WORLD'                     # Electricity Maps zone (e.g. WE, US-VA, FR)
+  - name: cpuModel
+    type: string
+    default: 'Intel Xeon Platinum 8370C'
+  - name: cpuTdpWatts
+    type: number
+    default: 270
+  - name: team
+    type: string
+    default: ''
+  - name: costCenter
+    type: string
+    default: ''
+  - name: attachDashboard
+    type: boolean
+    default: true
+  - name: electricityMapsTokenVar
+    type: string
+    default: ''                          # name of a secret variable holding the EMAPS token
+  - name: aggregatorVersion
+    type: string
+    default: 'latest'
+  - name: artifactName
+    type: string
+    default: 'cienergy-report'
+
+steps:
+  # =========================================================================
+  # PRE-JOB - start sampler, install aggregator
+  # =========================================================================
+  - bash: |
+      set -euo pipefail
+      WORK="$(Agent.TempDirectory)/cienergy"
+      mkdir -p "$WORK"
+      echo "##vso[task.setvariable variable=CIENERGY_WORK]$WORK"
+      echo "##vso[task.setvariable variable=CIENERGY_START]$(date -u +%FT%TZ)"
+      # 2-second CPU sampler in background. Replaced by the Go collector in v1.x.
+      nohup bash -c '
+        while true; do
+          if command -v top >/dev/null; then
+            U=$(top -bn1 2>/dev/null | awk "/Cpu/ {print 100 - \$8; exit}")
+          else
+            U=50
+          fi
+          echo "{\"t\":\"$(date -u +%FT%TZ)\",\"util\":${U:-50}}" >> "'"$WORK"'/util.jsonl"
+          sleep 2
+        done
+      ' >/dev/null 2>&1 &
+      echo $! > "$WORK/sampler.pid"
+    displayName: 'cienergy . start sampler'
+    condition: succeeded()
+
+  - bash: |
+      set -euo pipefail
+      WORK="$CIENERGY_WORK"
+      ARCH="$(uname -m)"
+      # Build from source if the cienergytool repo is checked out alongside.
+      if [[ -f "$(Build.SourcesDirectory)/cienergytool/cmd/aggregator/main.go" ]] && command -v go >/dev/null; then
+        (cd "$(Build.SourcesDirectory)/cienergytool" && go build -o "$WORK/cienergy-aggregator" ./cmd/aggregator)
+      fi
+      # Otherwise download the released binary.
+      if [[ ! -x "$WORK/cienergy-aggregator" ]]; then
+        VER="${{ parameters.aggregatorVersion }}"
+        BASE="https://github.com/axa-oss/cienergytool/releases"
+        URL="$BASE/${VER}/download/cienergy-aggregator-linux-${ARCH}"
+        [[ "$VER" == "latest" ]] && URL="$BASE/latest/download/cienergy-aggregator-linux-${ARCH}"
+        curl -fsSL -o "$WORK/cienergy-aggregator" "$URL"
+        chmod +x "$WORK/cienergy-aggregator"
+      fi
+    displayName: 'cienergy . install aggregator'
+    condition: succeeded()
+
+  # =========================================================================
+  # CONSUMER STEPS - the build/test/deploy work, wrapped by measurement.
+  # =========================================================================
+  - ${{ each step in parameters.steps }}:
+      - ${{ step }}
+
+  # =========================================================================
+  # POST-JOB - aggregate, attach dashboard, publish. Always runs.
+  # =========================================================================
+  - bash: |
+      set -euo pipefail
+      WORK="$CIENERGY_WORK"
+      kill "$(cat "$WORK/sampler.pid" 2>/dev/null)" 2>/dev/null || true
+
+      AVG_UTIL=$(awk -F'"util":' 'NF>1 {gsub(/[},]/,"",$2); s+=$2; n++} END{if(n>0) print s/n; else print 50}' "$WORK/util.jsonl" 2>/dev/null || echo 50)
+      START_TS=$(date -u -d "$CIENERGY_START" +%s 2>/dev/null || gdate -u -d "$CIENERGY_START" +%s)
+      DURATION=$(( $(date -u +%s) - START_TS ))
+
+      STEPS="$WORK/steps.jsonl"
+      printf '{"name":"job","durationSeconds":%d,"cpuUtilPct":%.1f}\n' "$DURATION" "$AVG_UTIL" > "$STEPS"
+
+      OUT="$WORK/energy-report.json"
+      EMAPS_TOK=""
+      if [[ -n "${{ parameters.electricityMapsTokenVar }}" ]]; then
+        EMAPS_TOK="$(eval echo \$${{ parameters.electricityMapsTokenVar }})"
+      fi
+
+      CIENERGY_EMAPS_TOKEN="$EMAPS_TOK" \
+      CIENERGY_TEAM="${{ parameters.team }}" \
+      CIENERGY_COST_CENTER="${{ parameters.costCenter }}" \
+      "$WORK/cienergy-aggregator" \
+        --start "$CIENERGY_START" \
+        --end   "$(date -u +%FT%TZ)" \
+        --platform azure-devops \
+        --repo  "$BUILD_REPOSITORY_NAME" \
+        --workflow "$BUILD_DEFINITIONNAME" \
+        --ref   "$BUILD_SOURCEBRANCH" \
+        --commit "$BUILD_SOURCEVERSION" \
+        --run-id "$BUILD_BUILDID" \
+        --os "$AGENT_OS" \
+        --arch "$AGENT_OSARCHITECTURE" \
+        --cpu-model "${{ parameters.cpuModel }}" \
+        --tdp ${{ parameters.cpuTdpWatts }} \
+        --region "${{ parameters.region }}" \
+        --steps-file "$STEPS" \
+        --out "$OUT"
+
+      SCI=$(grep -oE '"value":[ ]*[0-9.]+' "$OUT" | head -1 | awk -F: '{print $2}' | tr -d ' ')
+      echo "##vso[task.setvariable variable=CIENERGY_SCI_VALUE]$SCI"
+      echo "##vso[task.logissue type=warning]cienergy . SCI = ${SCI} gCO2eq (artifact: ${{ parameters.artifactName }}-$(Build.BuildId))"
+    displayName: 'cienergy . aggregate'
+    condition: always()
+
+  - bash: |
+      set -euo pipefail
+      WORK="$CIENERGY_WORK"
+      DASH_SRC="$(Build.SourcesDirectory)/cienergytool/dashboard/embedded"
+      if [[ -d "$DASH_SRC" ]]; then
+        cp -r "$DASH_SRC" "$WORK/dashboard"
+        mkdir -p "$WORK/dashboard/sample-reports"
+        cp "$WORK/energy-report.json" "$WORK/dashboard/sample-reports/this-run.json"
+        printf '{ "reports": ["this-run.json"] }\n' > "$WORK/dashboard/sample-reports/index.json"
+      fi
+    displayName: 'cienergy . attach dashboard'
+    condition: and(always(), eq('${{ parameters.attachDashboard }}', 'true'))
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'cienergy . publish artifact'
+    condition: always()
+    inputs:
+      targetPath: '$(CIENERGY_WORK)'
+      artifact: '${{ parameters.artifactName }}-$(Build.BuildId)'
+      publishLocation: 'pipeline'
+
+  - bash: |
+      set -euo pipefail
+      URL="${{ parameters.ingesterUrl }}"
+      [[ -z "$URL" ]] && exit 0
+      TOKEN=""
+      if [[ -n "${{ parameters.ingesterTokenVar }}" ]]; then
+        TOKEN="$(eval echo \$${{ parameters.ingesterTokenVar }})"
+      fi
+      AUTH=()
+      [[ -n "$TOKEN" ]] && AUTH=(-H "Authorization: Bearer $TOKEN")
+      for i in 1 2 3; do
+        if curl -fsS -X POST "${URL%/}/v1/runs" \
+             -H 'Content-Type: application/json' "${AUTH[@]}" \
+             --data @"$CIENERGY_WORK/energy-report.json" -o /tmp/cienergy-resp.json; then
+          echo "cienergy . pushed to $URL (attempt $i)"; cat /tmp/cienergy-resp.json; echo; exit 0
+        fi
+        echo "##vso[task.logissue type=warning]cienergy . ingester push failed (attempt $i)"
+        sleep $((i*i))
+      done
+      echo "##vso[task.logissue type=warning]cienergy . ingester push gave up after 3 attempts"
+    displayName: 'cienergy . push to ingester'
+    condition: and(always(), ne('${{ parameters.ingesterUrl }}', ''))
+

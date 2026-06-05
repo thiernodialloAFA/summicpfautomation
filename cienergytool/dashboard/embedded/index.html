@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cienergy — CI/CD Energy & Carbon Dashboard</title>
+  <meta name="description" content="Zero-dependency dashboard for SCI-compliant CI/CD energy reports." />
+  <link rel="preconnect" href="https://rsms.me/" />
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <header class="topbar" role="banner">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⚡</span>
+      <div>
+        <h1>cienergy <span class="ver">v1</span></h1>
+        <p class="tagline">CI/CD energy &amp; carbon — <abbr title="Software Carbon Intensity — ISO/IEC 21031:2024">SCI</abbr>-compliant</p>
+      </div>
+    </div>
+    <nav class="actions" aria-label="dashboard actions">
+      <label class="btn primary" tabindex="0">
+        <input type="file" id="filePicker" accept="application/json" multiple hidden />
+        <span aria-hidden="true">📂</span> Load reports
+      </label>
+      <button id="loadSamplesBtn" class="btn" type="button"><span aria-hidden="true">⭐</span> Samples</button>
+      <button id="exportCsvBtn"   class="btn" type="button"><span aria-hidden="true">⇩</span> Export CSV</button>
+      <button id="copyLinkBtn"    class="btn" type="button"><span aria-hidden="true">🔗</span> Share</button>
+      <button id="themeBtn"       class="btn icon" type="button" aria-label="toggle theme" title="Toggle light / dark">🌓</button>
+    </nav>
+  </header>
+
+  <main id="main" role="main">
+    <section id="dropZone" class="dropzone" aria-label="drop reports here">
+      <span class="hero-icon" aria-hidden="true">📊</span>
+      <h2>Visualise your CI/CD energy footprint</h2>
+      <p><strong>Drag &amp; drop</strong> one or more <code>energy-report.json</code> files —
+        or <button id="dropPickBtn" class="link" type="button">browse files</button> —
+        or <button id="dropSamplesBtn" class="link" type="button">load the 5 bundled samples</button>.</p>
+      <p class="hint">100% client-side. Files never leave your browser. Schema:
+        <a href="../../docs/schema/v1.json" target="_blank" rel="noopener">v1.0.0</a>.
+      </p>
+    </section>
+
+    <section id="summary" class="summary hidden" aria-label="summary metrics">
+      <article class="card"><h2>Runs</h2>          <p id="kpiRuns"   class="kpi">—</p></article>
+      <article class="card"><h2>Total energy</h2>  <p id="kpiKWh"    class="kpi">—</p><p class="unit">kWh</p></article>
+      <article class="card"><h2>Total carbon</h2>  <p id="kpiCO2"    class="kpi">—</p><p class="unit">gCO₂eq</p></article>
+      <article class="card"><h2>Mean SCI</h2>      <p id="kpiSCI"    class="kpi">—</p><p class="unit">gCO₂eq / run</p></article>
+      <article class="card"><h2>Cache savings</h2> <p id="kpiSaved"  class="kpi">—</p><p class="unit">gCO₂eq avoided</p></article>
+    </section>
+
+    <section class="charts hidden" id="charts">
+      <article class="card chart-card">
+        <h2>SCI per run <small>(chronological)</small></h2>
+        <canvas id="chartTrend" aria-label="SCI trend chart"></canvas>
+      </article>
+      <article class="card chart-card">
+        <h2>Energy breakdown by step</h2>
+        <canvas id="chartBreakdown" aria-label="energy by step"></canvas>
+      </article>
+      <article class="card chart-card">
+        <h2>Runner mix <small>(by total kWh)</small></h2>
+        <canvas id="chartRunnerMix" aria-label="runner mix"></canvas>
+      </article>
+      <article class="card chart-card">
+        <h2>Repository leaderboard</h2>
+        <canvas id="chartRepoLeader" aria-label="repo leaderboard"></canvas>
+      </article>
+    </section>
+
+    <section class="card table-card hidden" id="tableCard">
+      <header class="table-head">
+        <h2>Run details</h2>
+        <input id="filterInput" type="search" placeholder="filter by repo / workflow / team…" aria-label="filter runs" />
+      </header>
+      <div class="table-wrap">
+        <table id="runsTable">
+          <thead>
+            <tr>
+              <th data-sort="startedAt">When</th>
+              <th data-sort="repository">Repository</th>
+              <th data-sort="workflow">Workflow</th>
+              <th data-sort="arch">Arch</th>
+              <th data-sort="zone">Zone</th>
+              <th data-sort="intensity">I (gCO₂eq/kWh)</th>
+              <th data-sort="kwh">E (kWh)</th>
+              <th data-sort="co2">Total (gCO₂eq)</th>
+              <th data-sort="sci">SCI</th>
+              <th data-sort="source">Source</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="errors" class="errors hidden" role="alert"></section>
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <p>
+      <a href="https://sci.greensoftware.foundation/" target="_blank" rel="noopener">SCI · ISO/IEC 21031:2024</a> ·
+      <a href="https://tag-env-sustainability.cncf.io/publications/cloud-native-sustainability-whitepaper/" target="_blank" rel="noopener">CNCF Sustainability TAG</a> ·
+      <a href="../../docs/methodology.md" target="_blank" rel="noopener">Methodology</a> ·
+      <a href="../../README.md" target="_blank" rel="noopener">README</a>
+    </p>
+    <p class="muted">Zero backend. Zero tracker. Open source under Apache-2.0.</p>
+  </footer>
+
+  <!-- Vendored deps (CDN). For production / air-gapped use, vendor locally and
+       add SRI hashes — see dashboard/embedded/README.md ("Vendoring"). -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ajv@8.17.1/dist/ajv7.bundle.min.js"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>
+

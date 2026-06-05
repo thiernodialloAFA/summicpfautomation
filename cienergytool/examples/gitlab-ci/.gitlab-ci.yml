@@ -1,0 +1,36 @@
+# Sample .gitlab-ci.yml using the cienergy include template.
+
+include:
+  - project: 'axa-oss/cienergytool'
+    ref:     'v1.0.0'
+    file:    '/pipeline/gitlab-ci/cienergy.yml'
+
+stages: [build, test]
+
+variables:
+  CIENERGY_REGION: 'WE'
+  CIENERGY_TEAM:   'claims-platform'
+  CIENERGY_COST_CENTER: 'AXA-FR-IT-042'
+  CIENERGY_INGESTER_URL: 'https://cienergy.example.com'
+  # set CIENERGY_INGESTER_TOKEN as a masked CI/CD variable
+
+build:
+  extends: .cienergy
+  stage: build
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -qq curl ca-certificates
+    - !reference [.cienergy, before_script]
+  script:
+    - ./build.sh
+
+test:
+  extends: .cienergy
+  stage: test
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -qq curl ca-certificates
+    - !reference [.cienergy, before_script]
+  script:
+    - ./test.sh
+

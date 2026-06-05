@@ -1,0 +1,185 @@
+name: 'cienergy — CI/CD energy & carbon report'
+description: 'Measure energy consumption and carbon footprint of this job, emit a SCI-compliant JSON report.'
+author: 'AXA OSS'
+branding:
+  icon: 'activity'
+  color: 'green'
+
+inputs:
+  electricity-maps-token:
+    description: 'Electricity Maps API token (optional — Ember monthly average is used as fallback).'
+    required: false
+    default: ''
+  region:
+    description: 'Electricity Maps zone code (e.g. FR, US-VA). Defaults to a region inferred from RUNNER_OS.'
+    required: false
+    default: 'US-VA'
+  cpu-tdp:
+    description: 'CPU TDP in watts for this runner (defaults to 270, matching GitHub-hosted ubuntu-latest).'
+    required: false
+    default: '270'
+  cpu-model:
+    description: 'CPU model string.'
+    required: false
+    default: 'Intel Xeon Platinum 8370C'
+  team:
+    description: 'Team label, written to metadata.team.'
+    required: false
+    default: ''
+  cost-center:
+    description: 'Cost-center label, written to metadata.costCenter.'
+    required: false
+    default: ''
+  attach-dashboard:
+    description: 'Also upload the embedded HTML dashboard pre-loaded with this report.'
+    required: false
+    default: 'true'
+  ingester-url:
+    description: 'Optional cienergy ingester base URL (e.g. https://cienergy.example.com). When set, the report is POSTed to /v1/runs.'
+    required: false
+    default: ''
+  ingester-token:
+    description: 'Optional Bearer token for the ingester (sent only if ingester-url is set).'
+    required: false
+    default: ''
+
+outputs:
+  report-path:
+    description: 'Absolute path to the produced energy-report.json'
+    value: ${{ steps.aggregate.outputs.report-path }}
+  sci-value:
+    description: 'Final SCI value in gCO2eq'
+    value: ${{ steps.aggregate.outputs.sci-value }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: cienergy — prepare
+      id: prep
+      shell: bash
+      run: |
+        set -euo pipefail
+        WORK="${RUNNER_TEMP}/cienergy"
+        mkdir -p "$WORK"
+        echo "WORK=$WORK" >> "$GITHUB_ENV"
+        echo "CIENERGY_START=$(date -u +%FT%TZ)" >> "$GITHUB_ENV"
+
+    - name: cienergy — sample CPU utilisation (background)
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Tiny background sampler: writes per-step CPU util every second.
+        # In v1.x this will be replaced by the Go collector with RAPL/Kepler probing.
+        nohup bash -c '
+          while true; do
+            if command -v top >/dev/null; then
+              U=$(top -bn1 2>/dev/null | awk "/Cpu/ {print 100 - \$8; exit}")
+            else
+              U=50
+            fi
+            echo "{\"t\":\"$(date -u +%FT%TZ)\",\"util\":${U:-50}}" >> "$WORK/util.jsonl"
+            sleep 2
+          done
+        ' >/dev/null 2>&1 &
+        echo $! > "$WORK/sampler.pid"
+
+    - name: cienergy — install aggregator
+      shell: bash
+      run: |
+        set -euo pipefail
+        # In production: download a signed release binary. For now, build from source
+        # if the action is checked out next to the repo, otherwise fetch latest release.
+        if [[ -f "$GITHUB_ACTION_PATH/../cmd/aggregator/main.go" ]]; then
+          (cd "$GITHUB_ACTION_PATH/.." && go build -o "$WORK/cienergy-aggregator" ./cmd/aggregator)
+        else
+          curl -fsSL -o "$WORK/cienergy-aggregator" \
+            "https://github.com/axa-oss/cienergytool/releases/latest/download/cienergy-aggregator-linux-$(uname -m)"
+          chmod +x "$WORK/cienergy-aggregator"
+        fi
+
+    - name: cienergy — aggregate & emit report
+      id: aggregate
+      shell: bash
+      env:
+        CIENERGY_EMAPS_TOKEN: ${{ inputs.electricity-maps-token }}
+        CIENERGY_TEAM: ${{ inputs.team }}
+        CIENERGY_COST_CENTER: ${{ inputs.cost-center }}
+      run: |
+        set -euo pipefail
+        kill "$(cat "$WORK/sampler.pid")" 2>/dev/null || true
+
+        # Estimate average util across the run.
+        AVG_UTIL=$(awk -F'"util":' 'NF>1 {gsub(/[},]/,"",$2); s+=$2; n++} END{if(n>0) print s/n; else print 50}' "$WORK/util.jsonl" 2>/dev/null || echo 50)
+        DURATION=$(( $(date -u +%s) - $(date -u -d "$CIENERGY_START" +%s 2>/dev/null || gdate -u -d "$CIENERGY_START" +%s) ))
+
+        # Synthesise a single "job" step from the aggregated sampler data.
+        STEPS="$WORK/steps.jsonl"
+        printf '{"name":"job","durationSeconds":%d,"cpuUtilPct":%.1f}\n' "$DURATION" "$AVG_UTIL" > "$STEPS"
+
+        OUT="$WORK/energy-report.json"
+        "$WORK/cienergy-aggregator" \
+          --start "$CIENERGY_START" \
+          --end   "$(date -u +%FT%TZ)" \
+          --platform github-actions \
+          --repo "$GITHUB_REPOSITORY" \
+          --workflow "$GITHUB_WORKFLOW" \
+          --ref "$GITHUB_REF" \
+          --commit "$GITHUB_SHA" \
+          --run-id "$GITHUB_RUN_ID" \
+          --os "$RUNNER_OS" \
+          --arch "$RUNNER_ARCH" \
+          --cpu-model "${{ inputs.cpu-model }}" \
+          --tdp ${{ inputs.cpu-tdp }} \
+          --region "${{ inputs.region }}" \
+          --steps-file "$STEPS" \
+          --out "$OUT"
+
+        echo "report-path=$OUT" >> "$GITHUB_OUTPUT"
+        SCI=$(grep -oE '"value":[ ]*[0-9.]+' "$OUT" | head -1 | awk -F: '{print $2}' | tr -d ' ')
+        echo "sci-value=$SCI" >> "$GITHUB_OUTPUT"
+        echo "::notice title=cienergy::SCI = ${SCI} gCO2eq (see artifact 'energy-report')"
+
+    - name: cienergy — attach embedded dashboard
+      if: inputs.attach-dashboard == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        DASH_SRC="$GITHUB_ACTION_PATH/../dashboard/embedded"
+        if [[ -d "$DASH_SRC" ]]; then
+          cp -r "$DASH_SRC" "$WORK/dashboard"
+          mkdir -p "$WORK/dashboard/sample-reports"
+          cp "$WORK/energy-report.json" "$WORK/dashboard/sample-reports/this-run.json"
+        fi
+
+    - name: cienergy — push to ingester
+      if: inputs.ingester-url != ''
+      shell: bash
+      env:
+        INGESTER_URL: ${{ inputs.ingester-url }}
+        INGESTER_TOKEN: ${{ inputs.ingester-token }}
+      run: |
+        set -euo pipefail
+        AUTH=()
+        [[ -n "${INGESTER_TOKEN:-}" ]] && AUTH=(-H "Authorization: Bearer $INGESTER_TOKEN")
+        # Up to 3 retries with exponential backoff; never fail the build on telemetry error.
+        for i in 1 2 3; do
+          if curl -fsS -X POST "${INGESTER_URL%/}/v1/runs" \
+               -H 'Content-Type: application/json' "${AUTH[@]}" \
+               --data @"$WORK/energy-report.json" -o /tmp/cienergy-resp.json; then
+            echo "::notice title=cienergy::pushed to $INGESTER_URL (attempt $i)"
+            cat /tmp/cienergy-resp.json; echo
+            exit 0
+          fi
+          echo "::warning::ingester push failed (attempt $i)"; sleep $((i*i))
+        done
+        echo "::warning title=cienergy::ingester push gave up after 3 attempts"
+
+    - name: cienergy — upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: cienergy-report-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ env.WORK }}/energy-report.json
+          ${{ env.WORK }}/dashboard
+        if-no-files-found: warn
+
