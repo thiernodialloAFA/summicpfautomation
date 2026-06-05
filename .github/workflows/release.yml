@@ -25,6 +25,41 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # 0) Guard against a tag name that collides with a branch (main, master,
+  #    develop, …). Such a tag would make `git push origin main` ambiguous
+  #    ("dst refspec main matches more than one") and break the release
+  #    workflow for every contributor. Fail FAST before building anything.
+  # ---------------------------------------------------------------------------
+  guard-tag-name:
+    name: Reject branch-like tag names
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check tag vs branch names
+        env:
+          TAG: ${{ github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAG}" ]]; then
+            echo "::error::no tag provided (github.ref_name and inputs.tag are both empty)"
+            exit 1
+          fi
+          case "${TAG}" in
+            main|master|develop|dev|trunk|HEAD)
+              echo "::error::Tag name '${TAG}' collides with a common branch name."
+              echo "::error::This creates an ambiguous ref (refs/heads/${TAG} AND refs/tags/${TAG})"
+              echo "::error::and will break 'git push origin ${TAG}' for every contributor."
+              echo "::error::Re-tag with a proper semver tag, e.g. v1.0.0, then delete this tag:"
+              echo "::error::    gh api -X DELETE repos/\${{ github.repository }}/git/refs/tags/${TAG}"
+              exit 1
+              ;;
+          esac
+          # Soft check: warn but don't fail when the tag doesn't look like semver.
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$ ]]; then
+            echo "::warning::Tag '${TAG}' does not look like semver (vX.Y.Z). Continuing anyway."
+          fi
+          echo "✓ tag '${TAG}' is safe to release"
+
+  # ---------------------------------------------------------------------------
   # 1) Build cross-platform binaries reproducibly.
   #    Each matrix instance emits its per-platform sha256 list as a job output
   #    AND uploads a small "<platform>.sha256" artifact so the next job can
@@ -32,6 +67,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [guard-tag-name]
     runs-on: ubuntu-22.04
     defaults:
       run:
