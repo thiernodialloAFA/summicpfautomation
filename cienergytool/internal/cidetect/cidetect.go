@@ -37,6 +37,11 @@ type Pipeline struct {
 	Platform string // github-actions | gitlab-ci | azure-devops | jenkins | tekton
 	Name     string // human-friendly name (workflow name or filename)
 	Steps    []Step
+	// RunsOn carries the deduped set of runner-pool labels parsed from the
+	// pipeline definition (e.g. `ubuntu-22.04`, `ubuntu-22.04-arm`,
+	// `macos-14-xlarge`, `self-hosted gpu`). Empty when the pipeline doesn't
+	// declare any — callers should then fall back to a deterministic pick.
+	RunsOn []string
 }
 
 // TotalDurationSec returns the sum of all step durations.
@@ -163,9 +168,10 @@ type ghWorkflow struct {
 	Jobs map[string]ghJobOrCall `yaml:"jobs"`
 }
 type ghJobOrCall struct {
-	Name  string   `yaml:"name"`
-	Uses  string   `yaml:"uses"` // reusable workflow call → modelled as one step
-	Steps []ghStep `yaml:"steps"`
+	Name   string   `yaml:"name"`
+	Uses   string   `yaml:"uses"` // reusable workflow call → modelled as one step
+	Steps  []ghStep `yaml:"steps"`
+	RunsOn any      `yaml:"runs-on"` // string | []string | {group:..., labels:[...]}
 }
 type ghStep struct {
 	Name string `yaml:"name"`
@@ -190,6 +196,7 @@ func parseGitHubWorkflow(path, repoRoot string) (Pipeline, error) {
 	}
 
 	var steps []Step
+	runsOnSet := map[string]struct{}{}
 	// Iterate jobs in deterministic alphabetical order.
 	jobIDs := make([]string, 0, len(wf.Jobs))
 	for k := range wf.Jobs {
@@ -198,6 +205,9 @@ func parseGitHubWorkflow(path, repoRoot string) (Pipeline, error) {
 	sort.Strings(jobIDs)
 	for _, jid := range jobIDs {
 		job := wf.Jobs[jid]
+		for _, lbl := range flattenRunsOn(job.RunsOn) {
+			runsOnSet[lbl] = struct{}{}
+		}
 		jobLabel := job.Name
 		if jobLabel == "" {
 			jobLabel = jid
@@ -223,7 +233,56 @@ func parseGitHubWorkflow(path, repoRoot string) (Pipeline, error) {
 			steps = append(steps, classify(label, st.Uses, st.Run))
 		}
 	}
-	return Pipeline{Path: path, RelPath: rel, Platform: "github-actions", Name: name, Steps: steps}, nil
+	return Pipeline{Path: path, RelPath: rel, Platform: "github-actions", Name: name, Steps: steps, RunsOn: setToSortedSlice(runsOnSet)}, nil
+}
+
+// flattenRunsOn turns the polymorphic `runs-on:` YAML value (string,
+// []string, or {group:…, labels:[…]}) into a flat list of label strings.
+func flattenRunsOn(v any) []string {
+	var out []string
+	switch x := v.(type) {
+	case string:
+		if s := strings.TrimSpace(x); s != "" {
+			out = append(out, s)
+		}
+	case []any:
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					out = append(out, s)
+				}
+			}
+		}
+	case map[string]any:
+		// runs-on: { group: linux-runners, labels: [self-hosted, gpu] }
+		if labels, ok := x["labels"].([]any); ok {
+			for _, e := range labels {
+				if s, ok := e.(string); ok {
+					if s = strings.TrimSpace(s); s != "" {
+						out = append(out, s)
+					}
+				}
+			}
+		}
+		if g, ok := x["group"].(string); ok {
+			if g = strings.TrimSpace(g); g != "" {
+				out = append(out, "group:"+g)
+			}
+		}
+	}
+	return out
+}
+
+func setToSortedSlice(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ---- GitLab CI parser -----------------------------------------------------

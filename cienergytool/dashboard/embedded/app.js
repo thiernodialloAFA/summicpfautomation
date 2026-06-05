@@ -67,6 +67,53 @@ function fmtCarbonParts(g) {
 }
 const fmtE = (v) => { const p = fmtEnergyParts(v); return `${p.value} ${p.unit}`; };
 const fmtC = (v) => { const p = fmtCarbonParts(v); return `${p.value} ${p.unit}`; };
+
+// ---- Column-aware formatters ---------------------------------------------
+// Pick ONE unit per column (driven by the largest value in the column) and
+// render every cell in that unit, so visual comparison across rows works
+// without mental conversion. Numbers are written with 3 significant decimals
+// and right-aligned via `font-variant-numeric: tabular-nums`.
+
+// Each ladder is sorted DESCending by scale factor (kWh → mWh).
+const ENERGY_LADDER = [
+  { unit: "TWh", factor: 1e9 },
+  { unit: "GWh", factor: 1e6 },
+  { unit: "MWh", factor: 1e3 },
+  { unit: "kWh", factor: 1     },
+  { unit: "Wh",  factor: 1e-3 },
+  { unit: "mWh", factor: 1e-6 },
+];
+const CARBON_LADDER = [
+  { unit: "MtCO₂eq", factor: 1e12 },
+  { unit: "ktCO₂eq", factor: 1e9  },
+  { unit: "tCO₂eq",  factor: 1e6  },
+  { unit: "kgCO₂eq", factor: 1e3  },
+  { unit: "gCO₂eq",  factor: 1    },
+  { unit: "mgCO₂eq", factor: 1e-3 },
+];
+function pickCommonUnit(values, ladder) {
+  const max = values.reduce((m, v) => (v != null && isFinite(v) && Math.abs(v) > m ? Math.abs(v) : m), 0);
+  if (max === 0) return ladder.find(l => l.factor === 1) || ladder[ladder.length - 1];
+  return ladder.find(l => max >= l.factor) || ladder[ladder.length - 1];
+}
+function formatInUnit(v, base) {
+  if (v == null || !isFinite(v)) return "—";
+  const n = v / base.factor;
+  const a = Math.abs(n);
+  const d = a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : 3;
+  return n.toFixed(d);
+}
+// Returns an object { render(v) => "<value> <unit>", unit, base } where every
+// cell rendered through `.render` shares the same scale.
+function makeColumnFormatter(values, kind /* "energy" | "carbon" */) {
+  const ladder = kind === "carbon" ? CARBON_LADDER : ENERGY_LADDER;
+  const base = pickCommonUnit(values, ladder);
+  return {
+    unit: base.unit,
+    base,
+    render: (v) => `${formatInUnit(v, base)} <span class="muted">${base.unit}</span>`,
+  };
+}
 function setKpi(idValue, idUnit, parts, unitSuffix = "") {
   const elV = document.getElementById(idValue);
   const elU = document.getElementById(idUnit);
@@ -251,7 +298,6 @@ function render() {
   $("#dropZone").classList.toggle("hidden", hasData);
 
   renderErrors();
-  renderCsrdBanner();
   if (!hasData) return;
 
   renderKpis();
@@ -262,19 +308,9 @@ function render() {
 }
 
 function renderCsrdBanner() {
-  const el = $("#csrdBanner");
-  if (!el) return;
-  if (!state.csrd?.url) { el.classList.add("hidden"); return; }
-  el.classList.remove("hidden");
-  const a = $("#csrdDownload");
-  a.href = state.csrd.url;
-  a.setAttribute("download", state.csrd.url.split("/").pop() || "cienergy-csrd.csv");
-  const sub = $("#csrdBannerSub");
-  const parts = [];
-  if (state.csrd.period) parts.push(`period ${state.csrd.period}`);
-  if (state.csrd.by)     parts.push(`aggregated by ${state.csrd.by}`);
-  parts.push("GHG Protocol Scope 2 (operational) + Scope 3.1 (embodied)");
-  sub.textContent = parts.join(" · ");
+  // Removed: the dedicated CSRD/ESRS E1 download banner. The CSV is still
+  // staged by run.sh under dashboard/embedded/local-reports/ for users that
+  // want it, but we no longer surface it as a dashboard panel.
 }
 
 function renderErrors() {
@@ -330,8 +366,16 @@ function renderKpis() {
 
   // GPU energy slice (sum of step.gpuKWh) — kept as raw kWh + qualifier suffix.
   // (Not projected: GPU samples are an instrumentation artefact, not a scenario.)
-  const gpuParts = fmtEnergyParts(t.gpu);
-  setKpi("kpiGPU", "kpiGPUUnit", gpuParts, t.gpu > 0 ? "  (Σ gpuKWh)" : "  (no GPU samples)");
+  // When no report contains a `gpuKWh` field we show "—" instead of "0 mWh"
+  // so users don't mistake "no instrumentation" for "a real zero".
+  const stepsWithGpu = state.reports.reduce(
+    (n, r) => n + (r.energy.byStep || []).filter(s => typeof s.gpuKWh === "number").length, 0);
+  if (stepsWithGpu === 0) {
+    setKpi("kpiGPU", "kpiGPUUnit", { value: "—", unit: "kWh" }, "  (no GPU samples)");
+  } else {
+    setKpi("kpiGPU", "kpiGPUUnit", fmtEnergyParts(t.gpu),
+      `  (Σ over ${stepsWithGpu} GPU step${stepsWithGpu > 1 ? "s" : ""})`);
+  }
 
   setKpi("kpiCO2", "kpiCO2Unit", fmtCarbonParts(displayedCO2), suffix);
 
@@ -559,6 +603,12 @@ function renderTable() {
     });
 
   const tbody = $("#runsTable tbody");
+  // Build column-aware formatters so every kWh / gCO₂eq cell in the column
+  // is rendered in the same unit (the one driven by the largest value).
+  const fmtKwh = makeColumnFormatter(rows.map(r => r.kwh), "energy");
+  const fmtCo2 = makeColumnFormatter(rows.map(r => r.co2), "carbon");
+  const fmtSci = makeColumnFormatter(rows.map(r => r.sci), "carbon");
+
   tbody.innerHTML = rows.map(r => `
     <tr>
       <td>${fmt.date(r.startedAt)}</td>
@@ -567,11 +617,24 @@ function renderTable() {
       <td><span class="badge">${r.arch}</span></td>
       <td>${r.zone}</td>
       <td class="mono">${Math.round(r.intensity)} <span class="muted">g/kWh</span></td>
-      <td class="mono">${fmtE(r.kwh)}</td>
-      <td class="mono">${fmtC(r.co2)}</td>
-      <td class="mono">${fmtC(r.sci)} ${r.cache?.hit ? '<span class="badge ok" title="cache hit">cache</span>' : ""}</td>
+      <td class="mono">${fmtKwh.render(r.kwh)}</td>
+      <td class="mono">${fmtCo2.render(r.co2)}</td>
+      <td class="mono">${fmtSci.render(r.sci)} ${r.cache?.hit ? '<span class="badge ok" title="cache hit">cache</span>' : ""}</td>
       <td><span class="badge">${r.source}</span></td>
     </tr>`).join("");
+
+  // Reflect the chosen unit in the column header so users see what scale
+  // every cell is in without hovering each value.
+  const setColUnit = (sortKey, unit) => {
+    const th = document.querySelector(`#runsTable thead th[data-sort="${sortKey}"]`);
+    if (!th) return;
+    const base = th.dataset.label || th.textContent.replace(/\s*\([^)]*\)\s*$/, "").trim();
+    th.dataset.label = base;
+    th.firstChild && (th.firstChild.nodeValue = `${base} (${unit}) `);
+  };
+  setColUnit("kwh", fmtKwh.unit);
+  setColUnit("co2", fmtCo2.unit);
+  setColUnit("sci", fmtSci.unit);
 
   // Sort indicators
   document.querySelectorAll("#runsTable thead th").forEach(th => {

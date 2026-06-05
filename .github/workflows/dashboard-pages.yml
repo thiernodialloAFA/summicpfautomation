@@ -70,9 +70,16 @@ env:
   REPO_REMOTES:   ${{ inputs.repo_remotes  || vars.REPO_REMOTES  || '' }}
   CSRD_BY:        ${{ vars.CSRD_BY         || 'repository' }}
   CLONE_DEPTH:    ${{ vars.CLONE_DEPTH     || '1' }}
-  # Disable the local-only side-effects of run.sh in CI.
-  SKIP_GPU:       "1"
-  SKIP_OTLP:      "1"
+  # GPU and OTLP probes are ENABLED by default — run.sh degrades gracefully:
+  # • no nvidia-smi on the runner → "GPU probe skipped" warning, no failure.
+  # • no collector reachable at OTLP_ENDPOINT → "OTLP not reachable" warning.
+  # Override with vars.SKIP_GPU=1 / vars.SKIP_OTLP=1 if the warnings are noisy
+  # in your fork, or point OTLP_ENDPOINT at a real collector (e.g. Grafana
+  # Cloud OTLP gateway) to actually publish metrics from CI.
+  SKIP_GPU:       ${{ vars.SKIP_GPU        || '0' }}
+  SKIP_OTLP:      ${{ vars.SKIP_OTLP       || '0' }}
+  OTLP_ENDPOINT:  ${{ vars.OTLP_ENDPOINT   || 'http://localhost:4318' }}
+  OTLP_HEADER:    ${{ secrets.OTLP_HEADER  || '' }}
   OPEN_DASHBOARD: "0"
   INGESTER_URL:   "http://127.0.0.1:0"   # never reachable → ingest step is skipped
   # Pin the artifact path so the deploy job stays in sync with the build job.
@@ -133,6 +140,8 @@ jobs:
           CLONE_DEPTH:   ${{ env.CLONE_DEPTH }}
           SKIP_GPU:      ${{ env.SKIP_GPU }}
           SKIP_OTLP:     ${{ env.SKIP_OTLP }}
+          OTLP_ENDPOINT: ${{ env.OTLP_ENDPOINT }}
+          OTLP_HEADER:   ${{ env.OTLP_HEADER }}
           OPEN_DASHBOARD: ${{ env.OPEN_DASHBOARD }}
           INGESTER_URL:  ${{ env.INGESTER_URL }}
         run: |

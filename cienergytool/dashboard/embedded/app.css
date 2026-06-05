@@ -619,21 +619,4 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
   .sim-body { padding: 14px 16px 18px; }
 }
 
-/* ─── CSRD download banner (set by run.sh + loadFromQuery) ─────────────── */
-.csrd-banner {
-  margin-top: 24px;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; flex-wrap: wrap;
-  padding: 16px 22px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--surface)) 0%, var(--surface) 70%),
-    var(--surface);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-}
-.csrd-banner h2 {
-  margin: 0; font-size: 1.05rem; font-weight: 600;
-  text-transform: none; letter-spacing: 0; color: var(--text);
-}
-.csrd-banner .muted { margin: 4px 0 0; }
-
+/* (CSRD download banner CSS removed — panel deleted from the dashboard.) */

@@ -68,6 +68,7 @@ func main() {
 		raplKWh   = flag.Float64("rapl-kwh", -1, "override total energy from an external RAPL measurement (kWh); -1 = ignore")
 		otlpURL   = flag.String("otlp-endpoint", envOr("CIENERGY_OTLP_ENDPOINT", ""), "optional OTLP/HTTP-JSON base URL (POST to /v1/metrics)")
 		otlpAuth  = flag.String("otlp-header", envOr("CIENERGY_OTLP_HEADER", ""), "optional 'Header: Value' pair to add to the OTLP request (e.g. for auth)")
+		varyRunner = flag.Bool("vary-runner", true, "pick a realistic (arch, cpu-model, tdp, vcpu, ram) per job — driven by the pipeline's runs-on label when known, else by a deterministic hash of (repo, workflow). Disable with --vary-runner=false to keep the CLI defaults for every job.")
 	)
 	var repoPaths multiFlag
 	flag.Var(&repoPaths, "repo-path", "map a repo slug to a local checkout: 'org/app=./path'. Repeatable. When set, the aggregator scans the path with cidetect and emits one *distinct* report per detected CI pipeline, replacing the shared --steps-file numbers.")
@@ -114,6 +115,7 @@ func main() {
 		workflowName string // name shown in the report (and used to slug filenames)
 		pipelinePath string // optional, recorded as label
 		platform     string // overrides --platform when detected
+		runsOn       []string // runner-pool labels parsed from the pipeline YAML
 		steps        []stepSample
 	}
 	var jobs []job
@@ -135,6 +137,7 @@ func main() {
 					workflowName: p.Name,
 					pipelinePath: p.RelPath,
 					platform:     p.Platform,
+					runsOn:       p.RunsOn,
 					steps:        js,
 				})
 			}
@@ -176,14 +179,26 @@ func main() {
 	// steps list, hence its own energy/carbon — fixing the previous bug where
 	// every repo received an identical clone of the global --steps-file.
 	for idx, j := range jobs {
-		// 1. Per-job energy aggregation.
+		// 0. Per-job runner profile FIRST — its TDP and CPU model drive
+		// both the kWh estimation (eco-ci-model) and the embodied carbon
+		// lookup (Boavizta), so we must pick before computing either.
+		jobArch, jobCPU, jobTDP, jobVCPU, jobRAM := *arch, *cpuModel, *tdp, *vcpu, *ramGiB
+		runnerSource := "cli-default"
+		if *varyRunner {
+			pick := pickRunner(j.repo, j.workflowName, j.runsOn)
+			jobArch, jobCPU, jobTDP, jobVCPU, jobRAM = pick.arch, pick.cpuModel, pick.tdpWatts, pick.vCPU, pick.ramGiB
+			runnerSource = pick.source
+		}
+
+		// 1. Per-job energy aggregation, using the picked TDP so an arm64
+		// Graviton3 job no longer "borrows" a Xeon's 270 W envelope.
 		var totalKWh float64
 		reportSteps := make([]model.Step, 0, len(j.steps))
 		for _, s := range j.steps {
 			kwh := s.KWh
 			src := s.Source
 			if kwh == 0 {
-				kwh = ecoci.EstimateKWh(*tdp, s.CPUUtilPct, s.DurationSeconds)
+				kwh = ecoci.EstimateKWh(jobTDP, s.CPUUtilPct, s.DurationSeconds)
 				if src == "" {
 					src = "eco-ci-model"
 				}
@@ -228,7 +243,8 @@ func main() {
 			jobEnd = startT.Add(time.Duration(stepsDuration * float64(time.Second)))
 		}
 
-		emb := embRes.Resolve(ctx, *cpuModel, effectiveDuration)
+		// Embodied carbon also keyed off the picked CPU model.
+		emb := embRes.Resolve(ctx, jobCPU, effectiveDuration)
 		embodiedG := emb.GCO2eqForRun
 		embSource := emb.Source
 		if *embodiedOverride >= 0 {
@@ -251,6 +267,7 @@ func main() {
 			platform = j.platform
 		}
 
+
 		r := model.Report{
 			Schema:         model.SchemaURL,
 			SpecVersion:    model.SpecVersion,
@@ -267,8 +284,8 @@ func main() {
 				DurationSeconds: jobEnd.Sub(startT).Seconds(),
 			},
 			Runner: model.Runner{
-				OS: strings.ToLower(*os_), Arch: *arch, VCPU: *vcpu, RAMGiB: *ramGiB,
-				CPUModel: *cpuModel, TDPWatts: *tdp, Provider: *provider, Region: *region,
+				OS: strings.ToLower(*os_), Arch: jobArch, VCPU: jobVCPU, RAMGiB: jobRAM,
+				CPUModel: jobCPU, TDPWatts: jobTDP, Provider: *provider, Region: *region,
 			},
 			Energy: model.Energy{TotalKWh: round(totalKWh, 6), ByStep: reportSteps},
 			Carbon: model.Carbon{
@@ -290,7 +307,7 @@ func main() {
 		}
 		// Always populate metadata when the multi-repo or per-pipeline path is
 		// used, so downstream tools can group runs.
-		if *team != "" || *costCtr != "" || j.pipelinePath != "" || len(repos) > 1 {
+		if *team != "" || *costCtr != "" || j.pipelinePath != "" || len(repos) > 1 || *varyRunner {
 			if r.Metadata == nil {
 				r.Metadata = &model.Metadata{}
 			}
@@ -305,6 +322,12 @@ func main() {
 			}
 			if len(repos) > 1 {
 				r.Metadata.Labels["repositories"] = strings.Join(repos, ",")
+			}
+			if *varyRunner {
+				r.Metadata.Labels["runner_source"] = runnerSource
+				if len(j.runsOn) > 0 {
+					r.Metadata.Labels["runs_on"] = strings.Join(j.runsOn, ",")
+				}
 			}
 		}
 

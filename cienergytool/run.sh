@@ -65,7 +65,16 @@ cd "$SCRIPT_DIR"
 # early. Assign the default through a separate variable to keep it intact.
 # axa/claims,axa/policy,axa/shared-lib,
 DEFAULT_OUT_TEMPLATE='./reports/cienergy-{repo}.json'
-DEFAULT_REPOS='myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications'
+# Mix of demo + real public repos covering all CI/AI families:
+#   • workshop demo                       → bundled tree (always local)
+#   • backend code-quality tooling        → creedengo-* (cloned)
+#   • AI training & inference            → ultralytics (YOLO), vllm
+#   • AI serving / model deployment       → bentoml
+#   • AI agents / orchestration           → langgraph
+#   • Data / ML pipelines (DAG)          → dvc
+# Anything that looks like a git URL is shallow-cloned, scanned by cidetect,
+# and deleted on script exit. Override with REPOS='…' to scope down for speed.
+DEFAULT_REPOS='myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications,https://github.com/ultralytics/ultralytics.git,https://github.com/vllm-project/vllm.git,https://github.com/bentoml/BentoML.git,https://github.com/langchain-ai/langgraph.git,https://github.com/iterative/dvc.git'
 # Default REPO_PATHS: only the workshop repo is a real checkout in this tree.
 # The 3 axa/* slugs stay synthetic unless the user provides their own checkouts.
 DEFAULT_REPO_PATHS='myorg/green-api-workshop-final=./myorg/green-api-workshop-final'
@@ -108,15 +117,32 @@ section(){ printf "\n${C_BOLD}=== %s ===${C_OFF}\n" "$*"; }
 
 # ── 1. Build if needed ──────────────────────────────────────────────────────
 section "Build"
+# Rebuild whenever any .go source under cmd/<name>/ or internal/ is newer
+# than the binary. This avoids the silent "stale binary" footgun where a
+# feature added to the source never reaches the runtime because the cached
+# bin/* is still the previous build.
+# Force a clean rebuild with FORCE_BUILD=1.
+FORCE_BUILD="${FORCE_BUILD:-0}"
 build_one() {
   local name="$1" pkg="$2"
-  if [[ ! -x "./bin/${name}" ]]; then
-    log "bin/${name} not found — running 'go build ${pkg}'"
+  local bin="./bin/${name}"
+  local needs_build=0
+  if [[ "${FORCE_BUILD}" == "1" || ! -x "${bin}" ]]; then
+    needs_build=1
+  else
+    # Any .go file under the package dir or under internal/ newer than the
+    # binary → rebuild. `find -newer` is portable across BSD (macOS) and GNU.
+    local newer
+    newer=$(find "${pkg}" ./internal -type f -name '*.go' -newer "${bin}" 2>/dev/null | head -n1)
+    [[ -n "${newer}" ]] && needs_build=1
+  fi
+  if [[ "${needs_build}" -eq 1 ]]; then
     if ! command -v go >/dev/null 2>&1; then
       err "Go toolchain not found on PATH. Install Go or build the binaries manually with 'make build'."
       exit 1
     fi
-    go build -o "./bin/${name}" "${pkg}"
+    log "building ${bin} (sources newer or forced)"
+    go build -o "${bin}" "${pkg}"
   fi
 }
 build_one cienergy-aggregator  ./cmd/aggregator
@@ -124,6 +150,12 @@ build_one cienergy-csrd-export ./cmd/csrd-export
 build_one cienergy-gpu-probe   ./cmd/gpu-probe
 build_one cienergy-cidetect    ./cmd/cidetect
 ok "binaries ready: cienergy-aggregator, cienergy-csrd-export, cienergy-gpu-probe, cienergy-cidetect"
+# Sanity check: --vary-runner flag must be present (proves the binary embeds
+# the per-job runner picker added in this patch).
+if ! ./bin/cienergy-aggregator -h 2>&1 | grep -q -- '--vary-runner\|-vary-runner'; then
+  warn "aggregator binary does not advertise --vary-runner — likely stale."
+  warn "Run 'FORCE_BUILD=1 ./run.sh' to force a clean rebuild."
+fi
 
 # ── 2. GPU probe (optional, when nvidia-smi is available) ───────────────────
 section "GPU probe"
