@@ -26,6 +26,9 @@ permissions:
 jobs:
   # ---------------------------------------------------------------------------
   # 1) Build cross-platform binaries reproducibly.
+  #    Each matrix instance emits its per-platform sha256 list as a job output
+  #    AND uploads a small "<platform>.sha256" artifact so the next job can
+  #    fan-in and produce a single base64 subjects blob for the SLSA generator.
   # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -33,6 +36,13 @@ jobs:
     defaults:
       run:
         working-directory: cienergytool
+    outputs:
+      # Per-matrix sha256 line(s), surfaced to the fan-in job below.
+      hash-linux-amd64:   ${{ steps.hash.outputs.linux-amd64 }}
+      hash-linux-arm64:   ${{ steps.hash.outputs.linux-arm64 }}
+      hash-darwin-amd64:  ${{ steps.hash.outputs.darwin-amd64 }}
+      hash-darwin-arm64:  ${{ steps.hash.outputs.darwin-arm64 }}
+      hash-windows-amd64: ${{ steps.hash.outputs.windows-amd64 }}
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +80,26 @@ jobs:
               -ldflags="-s -w -X main.version=${VERSION}" \
               -o "$out" "./cmd/${cmd}"
           done
-          (cd dist && sha256sum * > checksums.txt)
+          (cd dist && sha256sum cienergy-* > checksums.txt)
+
+      - name: Capture per-platform sha256 subjects
+        id: hash
+        run: |
+          set -euo pipefail
+          # Emit ONLY the lines for binaries (not checksums.txt itself), then
+          # publish them as a job output keyed by "<goos>-<goarch>". The
+          # fan-in job concatenates all platform lists and base64-encodes
+          # them for the SLSA generator.
+          key="${{ matrix.goos }}-${{ matrix.goarch }}"
+          # GitHub Actions job outputs must be single-line; we keep the raw
+          # sha256 lines and escape newlines with %0A so we can decode later.
+          lines="$(cd dist && grep -E 'cienergy-[a-z-]+-[a-z0-9]+-[a-z0-9]+(\.exe)?$' checksums.txt | tr '\n' '\v')"
+          {
+            echo "${key}<<__EOF__"
+            printf '%s' "$lines"
+            echo
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -80,19 +109,58 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # 2) Generate SLSA Level 3 provenance for every artifact via the official
+  # 2) Fan-in: concatenate every per-platform sha256 list into ONE base64
+  #    blob that the SLSA reusable workflow can consume as `base64-subjects`.
+  #    Reusable workflows can't read matrix outputs directly, so we proxy
+  #    through a plain job that emits a single string output.
+  # ---------------------------------------------------------------------------
+  combine-hashes:
+    name: Combine sha256 subjects
+    needs: [build]
+    runs-on: ubuntu-22.04
+    outputs:
+      hashes: ${{ steps.combine.outputs.hashes }}
+    steps:
+      - id: combine
+        env:
+          H_LINUX_AMD64:   ${{ needs.build.outputs.hash-linux-amd64 }}
+          H_LINUX_ARM64:   ${{ needs.build.outputs.hash-linux-arm64 }}
+          H_DARWIN_AMD64:  ${{ needs.build.outputs.hash-darwin-amd64 }}
+          H_DARWIN_ARM64:  ${{ needs.build.outputs.hash-darwin-arm64 }}
+          H_WINDOWS_AMD64: ${{ needs.build.outputs.hash-windows-amd64 }}
+        run: |
+          set -euo pipefail
+          # Re-expand the \v line separator used in the build job.
+          all="$(printf '%s' \
+            "$H_LINUX_AMD64" "$H_LINUX_ARM64" "$H_DARWIN_AMD64" "$H_DARWIN_ARM64" "$H_WINDOWS_AMD64" \
+            | tr '\v' '\n' | sed '/^$/d')"
+          echo "──── subjects ────"
+          printf '%s\n' "$all"
+          echo "──────────────────"
+          if [[ -z "$all" ]]; then
+            echo "::error::no sha256 subjects collected from the build matrix"
+            exit 1
+          fi
+          # `base64-subjects` expects the file content base64-encoded
+          # (no newline). The SLSA generator decodes & parses it as a
+          # standard `sha256sum` checksum listing.
+          encoded="$(printf '%s\n' "$all" | base64 -w0)"
+          echo "hashes=${encoded}" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 3) Generate SLSA Level 3 provenance for every artifact via the official
   #    reusable workflow. This produces a sigstore-signed in-toto attestation.
   # ---------------------------------------------------------------------------
   provenance:
     name: SLSA provenance
-    needs: [build]
+    needs: [build, combine-hashes]
     permissions:
       id-token: write    # cosign OIDC
       contents: write    # write release notes
       actions: read      # for build context
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
     with:
-      base64-subjects: ${{ needs.build.outputs.hashes }}
+      base64-subjects: ${{ needs.combine-hashes.outputs.hashes }}
       provenance-name: cienergy.intoto.jsonl
       upload-assets: true
 
