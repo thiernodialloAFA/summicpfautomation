@@ -30,6 +30,9 @@ jobs:
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: cienergytool
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +48,10 @@ jobs:
 
       - name: Setup Go
         uses: actions/setup-go@v5
-        with: { go-version: '1.22', check-latest: true }
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache-dependency-path: cienergytool/go.sum
 
       - name: Build (reproducible)
         env:
@@ -70,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cienergy-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
+          path: cienergytool/dist/*
           retention-days: 7
 
   # ---------------------------------------------------------------------------

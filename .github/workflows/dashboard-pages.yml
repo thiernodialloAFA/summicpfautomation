@@ -24,13 +24,13 @@ on:
   push:
     branches: [main]
     paths:
-      - "cmd/**"
-      - "internal/**"
-      - "dashboard/embedded/**"
-      - "examples/samples/**"
-      - "run.sh"
-      - "go.mod"
-      - "go.sum"
+      - "cienergytool/cmd/**"
+      - "cienergytool/internal/**"
+      - "cienergytool/dashboard/embedded/**"
+      - "cienergytool/examples/samples/**"
+      - "cienergytool/run.sh"
+      - "cienergytool/go.mod"
+      - "cienergytool/go.sum"
       - ".github/workflows/dashboard-pages.yml"
   schedule:
     # Weekly refresh so the CSRD CSV always reflects ≤ 7 day-old grid data.
@@ -57,14 +57,16 @@ permissions:
   id-token: write
 
 # Only one Pages deployment at a time; cancel queued runs on the same ref.
+# NOTE: the docs.yml workflow also targets GitHub Pages — only one of the two
+# can actually be the published site of the repo at any time (last deploy wins).
 concurrency:
-  group: "pages-${{ github.ref }}"
+  group: "pages-dashboard-${{ github.ref }}"
   cancel-in-progress: false
 
 env:
   # Resolution order: workflow_dispatch input → repo var → hard-coded default.
   REGION:         ${{ inputs.region        || vars.REGION        || 'FR' }}
-  REPOS:          ${{ inputs.repos         || vars.REPOS         || 'axa/claims,axa/policy,axa/shared-lib,myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications' }}
+  REPOS:          ${{ inputs.repos         || vars.REPOS         || 'myorg/green-api-workshop-final,https://github.com/thiernodialloAFA/creedengo-java,https://github.com/thiernodialloAFA/creedengo-rules-specifications' }}
   REPO_REMOTES:   ${{ inputs.repo_remotes  || vars.REPO_REMOTES  || '' }}
   CSRD_BY:        ${{ vars.CSRD_BY         || 'repository' }}
   CLONE_DEPTH:    ${{ vars.CLONE_DEPTH     || '1' }}
@@ -74,7 +76,10 @@ env:
   OPEN_DASHBOARD: "0"
   INGESTER_URL:   "http://127.0.0.1:0"   # never reachable → ingest step is skipped
   # Pin the artifact path so the deploy job stays in sync with the build job.
-  DASHBOARD_DIR:  "dashboard/embedded"
+  # Paths used by GitHub actions (uses/path) are relative to the repo root,
+  # so they include the cienergytool/ prefix.
+  PROJECT_DIR:    "cienergytool"
+  DASHBOARD_DIR:  "cienergytool/dashboard/embedded"
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
@@ -84,6 +89,9 @@ jobs:
     name: Build dashboard with fresh reports
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cienergytool
 
     steps:
       - name: Checkout
@@ -94,8 +102,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: cienergytool/go.mod
           cache: true
+          cache-dependency-path: cienergytool/go.sum
 
       - name: Set up Python (used by run.sh's cidetect pretty-print)
         uses: actions/setup-python@v5
@@ -134,6 +143,7 @@ jobs:
       # waits for ?src=…  Inject a tiny default-redirect so the dashboard
       # auto-loads the freshly staged reports without any user action.
       - name: Wire default ?src for Pages visitors
+        working-directory: ${{ github.workspace }}
         run: |
           dir="${{ env.DASHBOARD_DIR }}"
           test -f "$dir/index.html" || { echo "::error::missing $dir/index.html"; exit 1; }
@@ -144,9 +154,9 @@ jobs:
           touch "$dir/.nojekyll"
           # Idempotent insert just before </head>.
           if ! grep -q 'cienergy-pages-autoload' "$dir/index.html"; then
-            python3 - <<'PY'
-          import io, pathlib, sys
-          p = pathlib.Path("${{ env.DASHBOARD_DIR }}/index.html")
+            DASHBOARD_DIR="$dir" python3 - <<'PY'
+          import os, pathlib, sys
+          p = pathlib.Path(os.environ["DASHBOARD_DIR"]) / "index.html"
           html = p.read_text(encoding="utf-8")
           inject = (
             '  <script id="cienergy-pages-autoload">\n'
@@ -180,7 +190,7 @@ jobs:
         with:
           name: cienergy-reports
           path: |
-            reports/
+            cienergytool/reports/
             ${{ env.DASHBOARD_DIR }}/local-reports/
           if-no-files-found: warn
           retention-days: 14
